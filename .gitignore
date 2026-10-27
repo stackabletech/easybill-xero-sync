@@ -1,0 +1,9 @@
+/target/
+/.direnv/
+# Local secrets, state and config: never commit.
+.envrc
+*.secrets
+state*.json
+state*.json.tmp
+/config.toml
+/.claude/

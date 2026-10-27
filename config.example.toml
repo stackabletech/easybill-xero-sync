@@ -1,0 +1,57 @@
+# Example configuration for easybill-xero.
+#
+# Copy to config.toml and adjust for your Xero org. Every TaxType and AccountCode
+# below is validated against the live org by `easybill-xero xero check`, which
+# fails fast if anything is missing or not ACTIVE.
+#
+# The values here are UK-edition placeholders. The real tax types / account codes
+# depend on the Xero org's region and chart of accounts.
+
+[xero]
+# Optional: the tenant id to use. OAuth: overrides the tenant stored by
+# `xero login`. Client credentials: picks one of the connected organisations
+# (a custom connection has exactly one, so omit it).
+# tenant_id = "00000000-0000-0000-0000-000000000000"
+
+# Tax table. Value = the Xero TaxType code. Key, from easybill:
+#   - taxable documents (no vat_option): "null/<vat_percent>", per line rate,
+#     without trailing zeros (20, 0, 7.5)
+#   - any other vat_option: the option alone ("nStb"). easybill charges no VAT
+#     on such documents, so the line's vat_percent is ignored.
+#
+# We use exactly three Xero tax rates (UK-edition codes; `xero check` verifies
+# them against the org and lists its active rates if one is wrong):
+#   OUTPUT2          20% (VAT on Income)  - our default rate
+#   ZERORATEDOUTPUT  Zero Rated Income
+#   NONE             No VAT
+[tax]
+"null/20" = "OUTPUT2"
+"null/0"  = "ZERORATEDOUTPUT"
+# easybill's exempt / reverse-charge options each need ZERORATEDOUTPUT or NONE.
+# Which one is a VAT treatment decision for the accountants; `xero check --from`
+# shows which of these easybill actually uses (an unused one can stay unmapped).
+# "nStb"            = ""   # not taxable (third country)
+# "nStbUstID"       = ""   # not taxable (EU, with VAT id)
+# "nStbNoneUstID"   = ""   # not taxable (EU, without VAT id)
+# "nStbIm"          = ""   # not taxable internal turnover
+# "revc"            = ""   # reverse charge
+# "IG"              = ""   # intra-community supply
+# "AL"              = ""   # export delivery
+# "sStfr"           = ""   # other tax exemption
+# "smallBusiness"   = ""   # small business (no VAT)
+
+# Account table. easybill's booking_account on each line is used directly as
+# the Xero AccountCode, so set the Xero codes in easybill. This table only holds
+# exceptions (e.g. old documents still carrying a former easybill account):
+#   "<easybill booking_account>" = "<Xero AccountCode>"
+# `default` is used for lines without a booking account.
+# `xero check --from <date>` lists the booking accounts in use and flags any
+# that don't exist (or aren't ACTIVE) in Xero.
+[accounts]
+default = "200"
+
+# easybill documents the sync should never touch ("we know this one errors,
+# never mind"), by document number or easybill document id. Skipped documents
+# are logged, counted in the summary and excluded from `xero check --from`.
+[sync]
+skip_documents = []

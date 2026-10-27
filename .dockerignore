@@ -1,0 +1,8 @@
+# Only the sources the image build needs; everything else stays out of the
+# build context, in particular secrets and local state.
+*
+!Cargo.toml
+!Cargo.lock
+!easybill/Cargo.toml
+!easybill/src/
+!src/

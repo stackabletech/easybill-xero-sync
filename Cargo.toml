@@ -1,0 +1,33 @@
+[workspace]
+members = ["easybill"]
+resolver = "2"
+
+[package]
+name = "easybill-xero"
+version = "0.1.0"
+edition = "2021"
+description = "One-way sync from easybill into Xero (customers, invoices, credit notes)."
+license = "Apache-2.0"
+publish = false
+
+[[bin]]
+name = "easybill-xero"
+path = "src/main.rs"
+
+[dependencies]
+easybill = { path = "easybill" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "time"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+clap = { version = "4", features = ["derive", "env"] }
+snafu = "0.8"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
+base64 = "0.22"
+url = "2"
+rand = "0.8"
+toml = "0.8"
+rust_decimal = { version = "1", features = ["serde-with-str"] }
+rust_decimal_macros = "1"
