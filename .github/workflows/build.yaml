@@ -108,7 +108,7 @@ jobs:
         with:
           registry: ${{ env.REGISTRY }}
           username: robot$${{ vars.REGISTRY_NAMESPACE }}+github-action-build
-          password: ${{ secrets.HARBOR_ROBOT_SECRET }}
+          password: ${{ secrets.HARBOR_ROBOT_STACKABLE_GITHUB_ACTION_BUILD_SECRET }}
 
       - name: Build and push
         id: build
