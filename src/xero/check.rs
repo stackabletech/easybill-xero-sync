@@ -592,6 +592,7 @@ pub async fn run(
                 .await
                 .context(EasybillSnafu)?;
             let (documents, skipped) = without_skipped(config, documents);
+            let skipped = skipped.len();
             if skipped > 0 {
                 println!("{skipped} document(s) excluded by [sync] skip_documents.");
             }

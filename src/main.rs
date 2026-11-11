@@ -6,11 +6,14 @@
 //! `sync customers|documents|all` (push easybill data into Xero). State lives in
 //! a single on-disk file. `--xero-auth` selects OAuth (dev) or a custom
 //! connection via client credentials (production).
+//!
+//! Each invocation runs in one `run` span with a `run_id`; see [`telemetry`].
 
 mod cli;
 mod config;
 mod state;
 mod sync;
+mod telemetry;
 mod xero;
 
 use std::error::Error as _;
@@ -19,6 +22,7 @@ use std::process::ExitCode;
 
 use clap::Parser;
 use snafu::{ResultExt, Snafu};
+use tracing::Instrument as _;
 
 use cli::{Cli, Command, LogFormat, SyncCommand, XeroCommand};
 use config::Config;
@@ -60,21 +64,100 @@ enum Error {
 #[tokio::main]
 async fn main() -> ExitCode {
     let cli = Cli::parse();
-    init_tracing(cli.log_format);
+    let log_format = cli.log_format;
+    let (telemetry, otlp_errors) = telemetry::init(log_format);
+    for error in otlp_errors {
+        // Traces and metrics are optional: log and carry on without them.
+        tracing::warn!(
+            error = %sync::error_chain(&error),
+            "OTLP export disabled"
+        );
+    }
+    let state_override = cli.state_file.clone();
+    let report = reported_command(&cli.command);
 
-    match run(cli).await {
+    let span = tracing::info_span!(
+        "run",
+        run_id = tracing::field::Empty,
+        command = command_name(&cli.command),
+        otel.status_code = tracing::field::Empty,
+    );
+    span.record("run_id", telemetry::run_id(&span));
+
+    let result = async {
+        tracing::info!(version = env!("CARGO_PKG_VERSION"), "run started");
+        let result = run(cli).await;
+        if let Some(command) = report {
+            let run_ok = matches!(
+                result,
+                Ok(())
+                    | Err(Error::Sync {
+                        source: sync::Error::ItemsFailed { .. }
+                    })
+            );
+            sync::report::publish(state_override.as_deref(), command, run_ok);
+        }
+        match &result {
+            Ok(()) => tracing::info!("run finished"),
+            Err(error) => {
+                tracing::Span::current().record("otel.status_code", "error");
+                // In text mode the error is printed below, readably.
+                if log_format == LogFormat::Json {
+                    tracing::error!(error = %sync::error_chain(error), "run failed");
+                }
+            }
+        }
+        result
+    }
+    .instrument(span)
+    .await;
+    telemetry.shutdown().await;
+
+    match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            // Print the human-readable message plus its cause chain, not the
-            // Debug representation (which would include a backtrace).
-            eprintln!("Error: {error}");
-            let mut source = error.source();
-            while let Some(cause) = source {
-                eprintln!("  caused by: {cause}");
-                source = cause.source();
+            if log_format == LogFormat::Text {
+                // Print the human-readable message plus its cause chain, not
+                // the Debug representation (which would include a backtrace).
+                eprintln!("Error: {error}");
+                let mut source = error.source();
+                while let Some(cause) = source {
+                    eprintln!("  caused by: {cause}");
+                    source = cause.source();
+                }
             }
             ExitCode::FAILURE
         }
+    }
+}
+
+/// The command to record in the status snapshot: real `sync` runs only, not
+/// dry-runs or previews (which change nothing).
+fn reported_command(command: &Command) -> Option<&'static str> {
+    let reported = match command {
+        Command::Sync { command } => match command {
+            SyncCommand::Customers(args) => !args.dry_run && !args.preview,
+            SyncCommand::Documents(args) => !args.dry_run,
+            SyncCommand::All(args) => !args.dry_run,
+        },
+        Command::Xero { .. } => false,
+    };
+    reported.then(|| command_name(command))
+}
+
+/// The subcommand as typed (`sync documents`), for the `run` span.
+fn command_name(command: &Command) -> &'static str {
+    match command {
+        Command::Xero { command } => match command {
+            XeroCommand::Login(_) => "xero login",
+            XeroCommand::Refresh => "xero refresh",
+            XeroCommand::Check(_) => "xero check",
+        },
+        Command::Sync { command } => match command {
+            SyncCommand::Customers(_) => "sync customers",
+            SyncCommand::Documents(_) => "sync documents",
+            SyncCommand::All(_) => "sync all",
+        },
     }
 }
 
@@ -163,22 +246,5 @@ fn check_window(
     match (from, to) {
         (Some(from), Some(to)) if to < from => InvalidWindowSnafu { from, to }.fail(),
         _ => Ok(()),
-    }
-}
-
-/// Initialises `tracing` to stderr in the given format, honouring `RUST_LOG`
-/// and defaulting to `info`. Text output is coloured only on a terminal.
-///
-/// User-facing results are written to stdout with `println!`; diagnostics go
-/// through `tracing` on stderr so the two streams can be redirected separately.
-fn init_tracing(format: LogFormat) {
-    use std::io::IsTerminal as _;
-    use tracing_subscriber::{fmt, EnvFilter};
-
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
-    let builder = fmt().with_env_filter(filter).with_writer(std::io::stderr);
-    match format {
-        LogFormat::Text => builder.with_ansi(std::io::stderr().is_terminal()).init(),
-        LogFormat::Json => builder.json().init(),
     }
 }

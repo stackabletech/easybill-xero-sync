@@ -5,6 +5,7 @@
 pub mod all;
 pub mod customers;
 pub mod documents;
+pub mod report;
 
 use snafu::Snafu;
 

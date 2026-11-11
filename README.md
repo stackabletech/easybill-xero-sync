@@ -90,7 +90,9 @@ synced; they are logged, counted in the summary and left out of
 
 Default: `$XDG_STATE_HOME/easybill-xero/state.json`, falling back to
 `~/.local/state/easybill-xero/state.json`; override with `--state-file`. It holds
-the easybill→Xero document mapping and, with `oauth`, the login. Created with
+the easybill→Xero document mapping, the last sync status of every document and
+customer and when each sync command last ran (see [Monitoring](#monitoring)),
+and, with `oauth`, the login. Created with
 mode `0600` and written atomically; every write re-reads the file and changes
 only its own part. With `oauth`, the rotated refresh token is persisted
 **before** any further API call. Mappings are per Xero organisation: start a
@@ -193,6 +195,75 @@ Diagnostics go to stderr (`--log-format json` for log collectors), results to
 stdout. Error logs carry Xero's and easybill's error messages only, never the
 response bodies (which echo invoice and contact data). HTTP requests time out,
 and an expiring access token is renewed during long runs.
+
+Every log line carries the context it was logged in, as `tracing` spans:
+
+| Span                                 | Fields                                                  |
+|--------------------------------------|---------------------------------------------------------|
+| `run`                                | `run_id`, `command`                                     |
+| `sync_customers` / `sync_documents`  | the command's options                                   |
+| `customer`                           | `customer_id`, `contact_id`                             |
+| `document`                           | `document_id`, `number`, `xero_id`, `outcome`           |
+| `xero_request` / `easybill_request`  | `context` (e.g. `PUT /Invoices`), `http.response.status_code` |
+
+In JSON, `span` is the innermost span and `spans` the whole stack, so every
+line can be filtered by `run_id` or `document_id`. In JSON mode the final
+error is logged too (`run failed`), instead of the plain-text `Error:` lines.
+
+Traces are exported over OTLP (HTTP/protobuf) when
+`OTEL_EXPORTER_OTLP_ENDPOINT` (or `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`) is set,
+e.g. `http://otel-collector:4318`; the other standard `OTEL_*` variables apply.
+One run is one trace with one child span per customer and document, and the
+`run_id` in the logs is the trace id. Spans of failed items are marked as
+errors. If the exporter can't be set up, the run continues without traces.
+
+### Monitoring
+
+Every real `sync` run (not `--dry-run` or `--preview`) records the status of
+each document and customer it attempted in the state file, and then exports a
+snapshot of **all** recorded statuses as OTLP gauges. It does this when
+`OTEL_EXPORTER_OTLP_ENDPOINT` (or `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`) is set:
+to an OTel collector that remote-writes to Prometheus/Mimir, or straight to a
+Prometheus 3 started with `--web.enable-otlp-receiver`
+(`…/api/v1/otlp/v1/metrics`). Documents outside a run's date window keep
+their last status.
+
+Document statuses: `synced`, `approved_in_xero`, `skipped` (fine), and
+`failed_config`, `failed_customer`, `failed_document`, `total_mismatch`,
+`failed_xero`, `pdf_missing`, `removed_in_xero` (issues). Customer statuses:
+`ok`, `blocked`, `failed`. A document failing for a reason other than its own
+data counts as `failed_customer` if its customer's last sync failed.
+
+| Metric                                                         | Labels                                                         |
+|----------------------------------------------------------------|----------------------------------------------------------------|
+| `easybill_xero_last_run_timestamp_seconds`                     | `command`                                                      |
+| `easybill_xero_last_run_success` (1/0, failed items don't count) | `command`                                                    |
+| `easybill_xero_last_success_timestamp_seconds`                 | `command`                                                      |
+| `easybill_xero_documents` / `easybill_xero_customers` (counts) | `status`                                                       |
+| `easybill_xero_document_issue_since_timestamp_seconds`         | `document_id`, `number`, `status`, `customer_id`, `currency`   |
+| `easybill_xero_document_issue_amount` (gross, credit notes negative) | same                                                     |
+| `easybill_xero_document_issue_reported_at_timestamp_seconds`   | same                                                           |
+| `easybill_xero_customer_issue_since_timestamp_seconds`         | `customer_id`, `status`                                        |
+| `easybill_xero_customer_issue_reported_at_timestamp_seconds`   | `customer_id`, `status`                                        |
+
+The values are written once per run, so between runs Prometheus has no
+current sample: query with `last_over_time(…[25h])` (longer than the
+schedule). Issues fixed since are still in that window; keep only those of the
+latest run, whose `reported_at` equals the latest `last_run`:
+
+```promql
+last_over_time(easybill_xero_document_issue_reported_at_timestamp_seconds[25h])
+  == on() group_left()
+max(last_over_time(easybill_xero_last_run_timestamp_seconds[25h]))
+```
+
+Don't add per-process resource attributes such as `service.instance.id`
+(e.g. in a collector processor): each run would then write new series instead
+of replacing the previous run's, and the counts would add up across runs.
+
+[`grafana/easybill-xero-sync.json`](grafana/easybill-xero-sync.json) is a
+ready dashboard (import it, pick the Prometheus data source, set `lookback` to
+more than the schedule and adjust the "Last successful sync" thresholds).
 
 ## Container image
 

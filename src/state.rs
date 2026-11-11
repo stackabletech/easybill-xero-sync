@@ -1,7 +1,8 @@
 //! Persistent state file.
 //!
 //! A single JSON file holds the Xero login (refresh token + tenant) plus the
-//! easybill→Xero id mapping for documents. Customers need no mapping: they are
+//! easybill→Xero id mapping for documents, plus the last sync status of every
+//! document and customer (for monitoring). Customers need no mapping: they are
 //! linked to Xero contacts at runtime via `ContactNumber` (see
 //! `sync::customers`). A `customers` section left by older versions is ignored
 //! on load and dropped on the next save.
@@ -77,6 +78,175 @@ pub struct State {
     /// easybill document id → Xero invoice/credit-note mapping.
     #[serde(default)]
     pub documents: BTreeMap<String, DocumentMapping>,
+
+    /// easybill document id → status of its last sync attempt.
+    #[serde(default)]
+    pub document_status: BTreeMap<String, DocumentRecord>,
+
+    /// easybill customer id → status of its last sync attempt.
+    #[serde(default)]
+    pub customer_status: BTreeMap<String, CustomerRecord>,
+
+    /// Command (`sync documents`, ...) → when it last ran.
+    #[serde(default)]
+    pub runs: BTreeMap<String, RunRecord>,
+}
+
+/// The sync status of an easybill document, as shown on the dashboard.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DocumentStatus {
+    /// Created or updated in Xero as a draft; total matches.
+    Synced,
+    /// Already approved (or paid) in Xero; left unchanged, total matches.
+    ApprovedInXero,
+    /// A tax key or booking account isn't mapped in the config.
+    FailedConfig,
+    /// The customer is missing, or its contact couldn't be synced.
+    FailedCustomer,
+    /// The easybill document itself is incomplete (no number, date, lines...).
+    FailedDocument,
+    /// Xero computed a different total than easybill.
+    TotalMismatch,
+    /// Any other failure, usually a Xero or easybill API error.
+    FailedXero,
+    /// Synced, but attaching the easybill PDF failed.
+    PdfMissing,
+    /// Deleted or voided in Xero while still valid in easybill.
+    RemovedInXero,
+    /// Listed in `[sync] skip_documents`.
+    Skipped,
+}
+
+impl DocumentStatus {
+    /// Every status, so the dashboard can show zero counts.
+    pub const ALL: [Self; 10] = [
+        Self::Synced,
+        Self::ApprovedInXero,
+        Self::FailedConfig,
+        Self::FailedCustomer,
+        Self::FailedDocument,
+        Self::TotalMismatch,
+        Self::FailedXero,
+        Self::PdfMissing,
+        Self::RemovedInXero,
+        Self::Skipped,
+    ];
+
+    /// The `status` label value (same as the serialised name).
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Synced => "synced",
+            Self::ApprovedInXero => "approved_in_xero",
+            Self::FailedConfig => "failed_config",
+            Self::FailedCustomer => "failed_customer",
+            Self::FailedDocument => "failed_document",
+            Self::TotalMismatch => "total_mismatch",
+            Self::FailedXero => "failed_xero",
+            Self::PdfMissing => "pdf_missing",
+            Self::RemovedInXero => "removed_in_xero",
+            Self::Skipped => "skipped",
+        }
+    }
+
+    /// Whether someone may have to act on the document.
+    pub fn is_issue(self) -> bool {
+        !matches!(self, Self::Synced | Self::ApprovedInXero | Self::Skipped)
+    }
+}
+
+/// The last sync status of one easybill document.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DocumentRecord {
+    /// The status of the last attempt.
+    pub status: DocumentStatus,
+
+    /// When the document entered this status (kept while it doesn't change).
+    pub since: DateTime<Utc>,
+
+    /// The easybill document number.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub number: Option<String>,
+
+    /// The easybill customer id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub customer_id: Option<i64>,
+
+    /// Gross amount in cents; negative for credit notes.
+    pub amount_cents: i64,
+
+    /// ISO currency code.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub currency: Option<String>,
+}
+
+/// The sync status of an easybill customer, as shown on the dashboard.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CustomerStatus {
+    /// Upserted as a Xero contact.
+    Ok,
+    /// Not upserted because it would duplicate or mislink a contact.
+    Blocked,
+    /// The upsert failed.
+    Failed,
+}
+
+impl CustomerStatus {
+    /// Every status, so the dashboard can show zero counts.
+    pub const ALL: [Self; 3] = [Self::Ok, Self::Blocked, Self::Failed];
+
+    /// The `status` label value (same as the serialised name).
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Ok => "ok",
+            Self::Blocked => "blocked",
+            Self::Failed => "failed",
+        }
+    }
+
+    /// Whether someone may have to act on the customer.
+    pub fn is_issue(self) -> bool {
+        self != Self::Ok
+    }
+}
+
+/// The last sync status of one easybill customer.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CustomerRecord {
+    /// The status of the last attempt.
+    pub status: CustomerStatus,
+
+    /// When the customer entered this status (kept while it doesn't change).
+    pub since: DateTime<Utc>,
+}
+
+/// When a sync command last ran.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RunRecord {
+    /// When it last finished, successfully or not.
+    pub last_run: DateTime<Utc>,
+
+    /// Whether that run finished without a run-level error (failed items
+    /// don't count).
+    pub last_run_ok: bool,
+
+    /// When it last finished without a run-level error.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_success: Option<DateTime<Utc>>,
+}
+
+/// The `since` for a status: kept from `previous` while the status is
+/// unchanged, else `now`.
+pub fn status_since<S: PartialEq>(
+    previous: Option<(S, DateTime<Utc>)>,
+    status: S,
+    now: DateTime<Utc>,
+) -> DateTime<Utc> {
+    match previous {
+        Some((old, since)) if old == status => since,
+        _ => now,
+    }
 }
 
 /// The kind of a synced document.
@@ -318,6 +488,31 @@ mod tests {
         assert_eq!(loaded.xero.expect("xero kept").refresh_token, "rotated");
         assert!(loaded.documents.contains_key("1"));
         std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn status_since_is_kept_while_unchanged() {
+        let then: DateTime<Utc> = "2026-11-01T00:00:00Z".parse().expect("valid timestamp");
+        let now: DateTime<Utc> = "2026-11-11T08:00:00Z".parse().expect("valid timestamp");
+        let failing = Some((DocumentStatus::FailedConfig, then));
+        assert_eq!(
+            status_since(failing, DocumentStatus::FailedConfig, now),
+            then
+        );
+        assert_eq!(status_since(failing, DocumentStatus::Synced, now), now);
+        assert_eq!(status_since(None, DocumentStatus::Synced, now), now);
+    }
+
+    #[test]
+    fn status_labels_match_serialised_names() {
+        for status in DocumentStatus::ALL {
+            let json = serde_json::to_string(&status).expect("serialises");
+            assert_eq!(json, format!("\"{}\"", status.label()));
+        }
+        for status in CustomerStatus::ALL {
+            let json = serde_json::to_string(&status).expect("serialises");
+            assert_eq!(json, format!("\"{}\"", status.label()));
+        }
     }
 
     #[test]

@@ -121,6 +121,16 @@ impl EasybillClient {
 
     /// Issues a GET to `path` (relative to the API base) with the given query
     /// pairs, retrying once on HTTP 429, and returns the successful response.
+    #[tracing::instrument(
+        name = "easybill_request",
+        skip_all,
+        fields(
+            context = context,
+            otel.kind = "client",
+            otel.status_code = tracing::field::Empty,
+            http.response.status_code = tracing::field::Empty,
+        )
+    )]
     async fn get(
         &self,
         path: &str,
@@ -142,12 +152,15 @@ impl EasybillClient {
                 .context(HttpSnafu { context })?;
 
             let status = response.status();
+            tracing::Span::current().record("http.response.status_code", status.as_u16());
             if status == StatusCode::TOO_MANY_REQUESTS && !retried {
                 retried = true;
+                tracing::warn!("easybill rate limit hit; waiting before retry");
                 tokio::time::sleep(retry_after(response.headers())).await;
                 continue;
             }
             if !status.is_success() {
+                tracing::Span::current().record("otel.status_code", "error");
                 let body = response.text().await.unwrap_or_default();
                 return ApiSnafu {
                     context,

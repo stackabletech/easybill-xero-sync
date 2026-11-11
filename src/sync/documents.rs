@@ -10,14 +10,20 @@
 //! failures are logged and the run continues; the exit is non-zero if any failed.
 //!
 //! The easybill PDF is attached to each Xero document unless `--no-pdf` is given.
+//!
+//! Every attempted document's [`DocumentStatus`] is recorded in state, for the
+//! monitoring snapshot (see [`super::report`]).
 
 use std::path::Path;
 
 use chrono::Utc;
 use snafu::{OptionExt, ResultExt};
+use tracing::Instrument as _;
 
 use crate::config::Config;
-use crate::state::{self, DocumentKind, DocumentMapping, State};
+use crate::state::{
+    self, status_since, DocumentKind, DocumentMapping, DocumentRecord, DocumentStatus, State,
+};
 use crate::sync::{
     ClientSnafu, EasybillSnafu, EmptyResponseSnafu, Error, ItemsFailedSnafu, Result, StateSnafu,
     TokenSnafu,
@@ -62,6 +68,11 @@ pub struct Options {
 /// Returns [`Error::Easybill`], [`Error::Token`], [`Error::Client`] or
 /// [`Error::State`] on a run-level failure, and [`Error::ItemsFailed`] if any
 /// individual document could not be synced (after attempting the rest).
+#[tracing::instrument(
+    name = "sync_documents",
+    skip_all,
+    fields(from = %options.from, to = options.to.as_deref(), dry_run = options.dry_run)
+)]
 pub async fn run(
     config: &Config,
     auth_mode: AuthMode,
@@ -69,7 +80,9 @@ pub async fn run(
     options: &Options,
 ) -> Result<()> {
     let easybill = EasybillClient::from_env().context(EasybillSnafu)?;
-    let (documents, skipped) = without_skipped(config, fetch_documents(&easybill, options).await?);
+    let (documents, skipped_documents) =
+        without_skipped(config, fetch_documents(&easybill, options).await?);
+    let skipped = skipped_documents.len();
     tracing::info!(
         count = documents.len(),
         skipped,
@@ -90,66 +103,94 @@ pub async fn run(
     // `State::update`, which re-reads the file, because the client may rotate
     // the refresh token in it during the run.
     let current = State::load(&state_path).context(StateSnafu)?;
+    State::update(&state_path, |s| {
+        for document in &skipped_documents {
+            record_status(s, document, DocumentStatus::Skipped);
+        }
+    })
+    .context(StateSnafu)?;
 
     let total = documents.len();
     let mut failed = 0usize;
     let mut finalised = 0usize;
     let mut removed = 0usize;
     for summary in &documents {
-        match sync_one(&client, config, &current, summary).await {
-            Ok(Synced {
-                mut mapping,
-                outcome,
-            }) => {
-                let number = summary.number.as_deref().unwrap_or("");
-                match &outcome {
-                    Outcome::Pushed => {}
-                    Outcome::Finalised(status) => {
-                        finalised += 1;
-                        tracing::info!(
-                            document_id = summary.id,
-                            number,
-                            %status,
-                            "already finalised in Xero; left unchanged (total matches)"
-                        );
-                    }
-                    Outcome::Removed(status) => {
-                        removed += 1;
-                        tracing::warn!(
-                            document_id = summary.id,
-                            number,
-                            %status,
-                            "deleted or voided in Xero; left alone (add it to [sync] skip_documents if that's intended)"
-                        );
-                    }
-                }
-                // Keep the uploaded flag if the document is still the same one.
-                mapping.pdf_uploaded = current
-                    .documents
-                    .get(&summary.id.to_string())
-                    .is_some_and(|m| m.pdf_uploaded && m.xero_id == mapping.xero_id);
-                // Attach the easybill PDF unless suppressed, already uploaded,
-                // or the Xero document is gone.
-                let removed_in_xero = matches!(outcome, Outcome::Removed(_));
-                if !options.no_pdf && !mapping.pdf_uploaded && !removed_in_xero {
-                    match attach_pdf(&easybill, &client, summary.id, &mapping).await {
-                        Ok(()) => mapping.pdf_uploaded = true,
-                        Err(e) => {
-                            failed += 1;
-                            tracing::error!(document_id = summary.id, error = %super::error_chain(&e), "PDF attach failed; document synced but marked failed");
+        // One span per document: every log line and HTTP call below carries
+        // the easybill id and number, and the trace has one subtree per document.
+        let span = tracing::info_span!(
+            "document",
+            document_id = summary.id,
+            number = summary.number.as_deref().unwrap_or(""),
+            xero_id = tracing::field::Empty,
+            outcome = tracing::field::Empty,
+            otel.status_code = tracing::field::Empty,
+        );
+        async {
+            match sync_one(&client, config, &current, summary).await {
+                Ok(Synced {
+                    mut mapping,
+                    outcome,
+                }) => {
+                    let span = tracing::Span::current();
+                    span.record("xero_id", mapping.xero_id.as_str());
+                    span.record("outcome", outcome.label());
+                    match &outcome {
+                        Outcome::Pushed => {
+                            tracing::info!("document synced");
+                        }
+                        Outcome::Finalised(status) => {
+                            finalised += 1;
+                            tracing::info!(
+                                %status,
+                                "already finalised in Xero; left unchanged (total matches)"
+                            );
+                        }
+                        Outcome::Removed(status) => {
+                            removed += 1;
+                            tracing::warn!(
+                                %status,
+                                "deleted or voided in Xero; left alone (add it to [sync] skip_documents if that's intended)"
+                            );
                         }
                     }
+                    // Keep the uploaded flag if the document is still the same one.
+                    mapping.pdf_uploaded = current
+                        .documents
+                        .get(&summary.id.to_string())
+                        .is_some_and(|m| m.pdf_uploaded && m.xero_id == mapping.xero_id);
+                    // Attach the easybill PDF unless suppressed, already uploaded,
+                    // or the Xero document is gone.
+                    let removed_in_xero = matches!(outcome, Outcome::Removed(_));
+                    let mut status = outcome.status();
+                    if !options.no_pdf && !mapping.pdf_uploaded && !removed_in_xero {
+                        match attach_pdf(&easybill, &client, summary.id, &mapping).await {
+                            Ok(()) => mapping.pdf_uploaded = true,
+                            Err(e) => {
+                                failed += 1;
+                                status = DocumentStatus::PdfMissing;
+                                span.record("otel.status_code", "error");
+                                tracing::error!(error = %super::error_chain(&e), "PDF attach failed; document synced but marked failed");
+                            }
+                        }
+                    }
+                    State::update(&state_path, |s| {
+                        s.documents.insert(summary.id.to_string(), mapping);
+                        record_status(s, summary, status);
+                    })
+                    .context(StateSnafu)
                 }
-                State::update(&state_path, |s| {
-                    s.documents.insert(summary.id.to_string(), mapping);
-                })
-                .context(StateSnafu)?;
-            }
-            Err(e) => {
-                failed += 1;
-                tracing::error!(document_id = summary.id, error = %super::error_chain(&e), "failed to sync document; continuing");
+                Err(e) => {
+                    failed += 1;
+                    tracing::Span::current().record("otel.status_code", "error");
+                    tracing::error!(error = %super::error_chain(&e), "failed to sync document; continuing");
+                    let status = failure_status(&e, customer_has_issue(&current, summary));
+                    State::update(&state_path, |s| record_status(s, summary, status))
+                        .context(StateSnafu)
+                }
             }
         }
+        .instrument(span)
+        .await?;
     }
 
     println!(
@@ -182,9 +223,12 @@ async fn fetch_documents(easybill: &EasybillClient, options: &Options) -> Result
         .context(EasybillSnafu)
 }
 
-/// Drops the documents listed in `[sync] skip_documents`, logging each, and
-/// returns the rest with the number dropped. Shared with `xero check`.
-pub(crate) fn without_skipped(config: &Config, documents: Vec<Document>) -> (Vec<Document>, usize) {
+/// Splits off the documents listed in `[sync] skip_documents`, logging each,
+/// and returns `(kept, skipped)`. Shared with `xero check`.
+pub(crate) fn without_skipped(
+    config: &Config,
+    documents: Vec<Document>,
+) -> (Vec<Document>, Vec<Document>) {
     let (skipped, kept): (Vec<_>, Vec<_>) = documents
         .into_iter()
         .partition(|d| config.skips_document(d.id, d.number.as_deref()));
@@ -195,7 +239,7 @@ pub(crate) fn without_skipped(config: &Config, documents: Vec<Document>) -> (Vec
             "skipped: listed in [sync] skip_documents"
         );
     }
-    (kept, skipped.len())
+    (kept, skipped)
 }
 
 /// The easybill filters selecting syncable documents (non-draft, non-cancelled
@@ -264,6 +308,26 @@ enum Outcome {
 
     /// Deleted or voided in Xero: left alone, total not checked.
     Removed(String),
+}
+
+impl Outcome {
+    /// The document status this outcome records.
+    fn status(&self) -> DocumentStatus {
+        match self {
+            Self::Pushed => DocumentStatus::Synced,
+            Self::Finalised(_) => DocumentStatus::ApprovedInXero,
+            Self::Removed(_) => DocumentStatus::RemovedInXero,
+        }
+    }
+
+    /// Short name for the `outcome` span field.
+    fn label(&self) -> &'static str {
+        match self {
+            Self::Pushed => "pushed",
+            Self::Finalised(_) => "finalised",
+            Self::Removed(_) => "removed",
+        }
+    }
 }
 
 /// How an existing Xero document may be treated, by status.
@@ -355,7 +419,7 @@ async fn sync_one(
         match disposition(existing.status.as_deref()) {
             Disposition::Editable => {}
             Disposition::Finalised => {
-                check_total(id, document.amount, existing.total)?;
+                check_total(document.amount, existing.total)?;
                 return Ok(Synced {
                     mapping: mapping(existing.xero_id.clone()),
                     outcome: Outcome::Finalised(status),
@@ -405,7 +469,7 @@ async fn sync_one(
             (result.credit_note_id, result.total)
         }
     };
-    check_total(id, document.amount, total)?;
+    check_total(document.amount, total)?;
     Ok(Synced {
         mapping: mapping(xero_id),
         outcome: Outcome::Pushed,
@@ -462,7 +526,6 @@ async fn find_invoice(
             Err(e) if is_not_found(&e) => {
                 tracing::warn!(
                     xero_id,
-                    number,
                     "mapped Xero invoice not found; looking up by number"
                 );
             }
@@ -501,7 +564,6 @@ async fn find_credit_note(
             Err(e) if is_not_found(&e) => {
                 tracing::warn!(
                     xero_id,
-                    number,
                     "mapped Xero credit note not found; looking up by number"
                 );
             }
@@ -536,16 +598,60 @@ fn known_id(state: &State, id: i64) -> Option<&str> {
 }
 
 /// Verifies the Xero total against the easybill amount, erroring on mismatch.
-fn check_total(
-    id: i64,
-    amount_cents: i64,
-    xero_total: Option<rust_decimal::Decimal>,
-) -> Result<()> {
+fn check_total(amount_cents: i64, xero_total: Option<rust_decimal::Decimal>) -> Result<()> {
     if let Err(mismatch) = verify_total(amount_cents, xero_total) {
-        tracing::error!(document_id = id, %mismatch, "total mismatch; marking document failed");
+        tracing::error!(%mismatch, "total mismatch; marking document failed");
         return Err(Error::TotalMismatch { source: mismatch });
     }
     Ok(())
+}
+
+/// Records `status` as the document's current sync status.
+fn record_status(state: &mut State, document: &Document, status: DocumentStatus) {
+    let key = document.id.to_string();
+    let previous = state.document_status.get(&key).map(|r| (r.status, r.since));
+    // easybill amounts are positive for credit notes too.
+    let amount_cents = if document.doc_type.as_deref() == Some("CREDIT") {
+        -document.amount
+    } else {
+        document.amount
+    };
+    let record = DocumentRecord {
+        status,
+        since: status_since(previous, status, Utc::now()),
+        number: document.number.clone(),
+        customer_id: document.customer_id,
+        amount_cents,
+        currency: document.currency.clone(),
+    };
+    state.document_status.insert(key, record);
+}
+
+/// The status recorded for a document that failed to sync. A failure that
+/// isn't explained by the document itself is put down to its customer when
+/// that customer's last sync failed too (e.g. a blocked contact).
+fn failure_status(error: &Error, customer_has_issue: bool) -> DocumentStatus {
+    use crate::xero::document::Error as MappingError;
+    match error {
+        Error::Mapping { source } => match source.as_ref() {
+            MappingError::LineMapping { .. } => DocumentStatus::FailedConfig,
+            MappingError::MissingCustomer { .. } => DocumentStatus::FailedCustomer,
+            _ => DocumentStatus::FailedDocument,
+        },
+        Error::TotalMismatch { .. } => DocumentStatus::TotalMismatch,
+        _ if customer_has_issue => DocumentStatus::FailedCustomer,
+        _ => DocumentStatus::FailedXero,
+    }
+}
+
+/// Whether the document's customer had a problem in its last customer sync.
+fn customer_has_issue(state: &State, document: &Document) -> bool {
+    document.customer_id.is_some_and(|id| {
+        state
+            .customer_status
+            .get(&id.to_string())
+            .is_some_and(|r| r.status.is_issue())
+    })
 }
 
 /// Extracts the first invoice from a response, or errors.

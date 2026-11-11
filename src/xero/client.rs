@@ -174,6 +174,16 @@ impl ApiClient {
     ///
     /// Renews the token and retries once on HTTP 401, and waits for
     /// `Retry-After` and retries once on HTTP 429.
+    #[tracing::instrument(
+        name = "xero_request",
+        skip_all,
+        fields(
+            context = context,
+            otel.kind = "client",
+            otel.status_code = tracing::field::Empty,
+            http.response.status_code = tracing::field::Empty,
+        )
+    )]
     async fn send(
         &self,
         method: Method,
@@ -200,6 +210,7 @@ impl ApiClient {
 
             let response = req.send().await.context(HttpSnafu { context })?;
             let status = response.status();
+            tracing::Span::current().record("http.response.status_code", status.as_u16());
 
             if status == StatusCode::UNAUTHORIZED && !renewed {
                 renewed = true;
@@ -221,6 +232,7 @@ impl ApiClient {
 
             let text = response.text().await.context(HttpSnafu { context })?;
             if !status.is_success() {
+                tracing::Span::current().record("otel.status_code", "error");
                 return ApiSnafu {
                     context,
                     status: status.as_u16(),

@@ -13,13 +13,16 @@
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
-use chrono::NaiveDateTime;
+use chrono::{NaiveDateTime, Utc};
 
 use snafu::{OptionExt, ResultExt};
+use tracing::Instrument as _;
 
 use crate::config::Config;
+use crate::state::{self, status_since, CustomerRecord, CustomerStatus, State};
 use crate::sync::{
-    ClientSnafu, EasybillSnafu, EmptyResponseSnafu, ItemsFailedSnafu, Result, TokenSnafu,
+    ClientSnafu, EasybillSnafu, EmptyResponseSnafu, ItemsFailedSnafu, Result, StateSnafu,
+    TokenSnafu,
 };
 use crate::xero::client::ApiClient;
 use crate::xero::contact::{map_customer, name_with_number_suffix};
@@ -127,6 +130,11 @@ impl<'a> ExistingIndex<'a> {
 /// Returns [`Easybill`](super::Error::Easybill), [`Token`](super::Error::Token)
 /// or [`Client`](super::Error::Client) on a run-level failure, and [`ItemsFailed`](super::Error::ItemsFailed) if any
 /// individual customer could not be upserted (after attempting the rest).
+#[tracing::instrument(
+    name = "sync_customers",
+    skip_all,
+    fields(since = options.since.map(tracing::field::display), dry_run = options.dry_run, preview = options.preview)
+)]
 pub async fn run(
     config: &Config,
     auth_mode: AuthMode,
@@ -190,31 +198,50 @@ pub async fn run(
 
     let total = planned.len();
     let mut failed = 0usize;
+    let mut statuses = Vec::with_capacity(total);
     for planned in planned {
-        let (customer, contact) = match planned {
-            Planned::Upsert {
-                customer, contact, ..
-            } => (customer, contact),
-            Planned::Blocked { customer, reason } => {
-                failed += 1;
-                tracing::error!(customer_id = customer.id, %reason, "contact not upserted");
-                continue;
-            }
+        let customer = match &planned {
+            Planned::Upsert { customer, .. } | Planned::Blocked { customer, .. } => customer,
         };
-        match upsert_one(&client, &contact).await {
-            Ok(contact_id) => {
-                tracing::debug!(customer_id = customer.id, %contact_id, "contact upserted");
-            }
-            Err(e) => {
-                failed += 1;
-                tracing::error!(
-                    customer_id = customer.id,
-                    error = %super::error_chain(&e),
-                    "failed to upsert contact; continuing"
-                );
+        let span = tracing::info_span!(
+            "customer",
+            customer_id = customer.id,
+            contact_id = tracing::field::Empty,
+            otel.status_code = tracing::field::Empty,
+        );
+        let customer_id = customer.id;
+        let status = async {
+            let contact = match planned {
+                Planned::Upsert { contact, .. } => contact,
+                Planned::Blocked { reason, .. } => {
+                    failed += 1;
+                    tracing::Span::current().record("otel.status_code", "error");
+                    tracing::error!(%reason, "contact not upserted");
+                    return CustomerStatus::Blocked;
+                }
+            };
+            match upsert_one(&client, &contact).await {
+                Ok(contact_id) => {
+                    tracing::Span::current().record("contact_id", contact_id.as_str());
+                    tracing::debug!("contact upserted");
+                    CustomerStatus::Ok
+                }
+                Err(e) => {
+                    failed += 1;
+                    tracing::Span::current().record("otel.status_code", "error");
+                    tracing::error!(
+                        error = %super::error_chain(&e),
+                        "failed to upsert contact; continuing"
+                    );
+                    CustomerStatus::Failed
+                }
             }
         }
+        .instrument(span)
+        .await;
+        statuses.push((customer_id, status));
     }
+    record_statuses(state_override, &statuses)?;
 
     println!(
         "sync customers: {} succeeded, {} failed, of {} selected.",
@@ -226,6 +253,25 @@ pub async fn run(
         return ItemsFailedSnafu { failed, total }.fail();
     }
     Ok(())
+}
+
+/// Records each customer's sync status in state, for the monitoring snapshot.
+fn record_statuses(
+    state_override: Option<&Path>,
+    statuses: &[(i64, CustomerStatus)],
+) -> Result<()> {
+    let path = state::resolve_path(state_override).context(StateSnafu)?;
+    let now = Utc::now();
+    State::update(&path, |s| {
+        for &(id, status) in statuses {
+            let key = id.to_string();
+            let previous = s.customer_status.get(&key).map(|r| (r.status, r.since));
+            let since = status_since(previous, status, now);
+            s.customer_status
+                .insert(key, CustomerRecord { status, since });
+        }
+    })
+    .context(StateSnafu)
 }
 
 /// Whether a customer's `updated_at` is `>= since`. A customer whose
