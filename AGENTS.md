@@ -35,7 +35,24 @@ cargo test --workspace --locked
 ```
 
 Update `README.md` when behaviour, options, environment variables or metrics
-change, and `TODO.md` when you finish or discover open work.
+change.
+
+## Keeping `TODO.md` current
+
+`TODO.md` is the only list of open work; keep it true.
+
+- **Before starting a task**, read `TODO.md`. If the task touches an item,
+  work from it, and mention related items the user may not have in mind.
+- **When an item is done**, remove it in the same change. If it was only
+  partly done, rewrite it to say what is left.
+- **When new open work comes up** (a gap you noticed, something left out of
+  scope, a follow-up the user mentions, an untested part), add it in the same
+  change, under the matching heading: what is missing, why it matters, and
+  where in the code it lives.
+- **When an item turns out to be wrong or obsolete**, remove or correct it,
+  and say so in your summary.
+- At the end of a task, tell the user which items you added, removed or
+  changed.
 
 ## Ground rules of the domain
 
