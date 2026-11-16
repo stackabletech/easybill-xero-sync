@@ -58,3 +58,6 @@ commit if it isn't obvious.
 - [ ] **Container build.** The OpenTelemetry dependencies haven't been built
   with the static Dockerfile yet (no C dependencies were added, so no problems
   are expected).
+- [ ] **Dev shell with Nix and direnv.** The credential loading in
+  `shell.nix` was only tested as plain bash; `nix-shell` and `direnv allow`
+  with the committed `.envrc` haven't been run.

@@ -2,7 +2,8 @@
 #
 # Usage:
 #   nix-shell            # drop into a shell with the full Rust toolchain
-#   direnv allow         # or let direnv load it automatically (see .envrc)
+#   direnv allow         # or let direnv load it automatically (see .envrc;
+#                        # personal additions go in .envrc.local)
 #
 # The toolchain comes from nixpkgs, so `rustup` is not involved.
 #
@@ -18,7 +19,7 @@
 { pkgs ? import <nixpkgs> { } }:
 
 pkgs.mkShell {
-  name = "xero-export";
+  name = "easybill-xero";
 
   # Rust toolchain + build tools.
   nativeBuildInputs = with pkgs; [
@@ -38,18 +39,22 @@ pkgs.mkShell {
   SSL_CERT_FILE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
 
   shellHook = ''
-    echo "xero-export dev shell — $(rustc --version)"
+    echo "easybill-xero dev shell — $(rustc --version)"
 
-    # Load Xero OAuth credentials from ~/.secrets/xero.
+    # Load the credentials from ~/.secrets/xero.
     #
     # This is done here in the shellHook (plain bash at shell entry), NOT via
     # builtins.readFile: reading the secret at Nix eval time would copy it into
     # the world-readable Nix store. Values are never printed.
     #
     # Supported layouts:
-    #   - a file:      ~/.secrets/xero  containing `XERO_CLIENT_ID=...` /
-    #                  `XERO_CLIENT_SECRET=...` lines (with or without `export`)
-    #   - a directory: ~/.secrets/xero/{client_id,client_secret}
+    #   - a file:      ~/.secrets/xero  containing `KEY=value` lines (with or
+    #                  without `export`); every variable in it is exported
+    #   - a directory: ~/.secrets/xero/ with one file per value:
+    #                  client_id          -> XERO_CLIENT_ID
+    #                  client_secret      -> XERO_CLIENT_SECRET
+    #                  easybill_api_token -> EASYBILL_API_TOKEN
+    #                  auth               -> XERO_AUTH (`oauth` or `client-credentials`)
     xero_secret="$HOME/.secrets/xero"
     if [ -f "$xero_secret" ]; then
       set -a
@@ -57,17 +62,24 @@ pkgs.mkShell {
       . "$xero_secret"
       set +a
     elif [ -d "$xero_secret" ]; then
-      [ -f "$xero_secret/client_id" ] \
-        && export XERO_CLIENT_ID="$(cat "$xero_secret/client_id")"
-      [ -f "$xero_secret/client_secret" ] \
-        && export XERO_CLIENT_SECRET="$(cat "$xero_secret/client_secret")"
+      for entry in client_id:XERO_CLIENT_ID client_secret:XERO_CLIENT_SECRET \
+                   easybill_api_token:EASYBILL_API_TOKEN auth:XERO_AUTH; do
+        file="$xero_secret/''${entry%%:*}"
+        [ -f "$file" ] && export "''${entry#*:}=$(cat "$file")"
+      done
+      unset entry file
     fi
 
-    if [ -n "''${XERO_CLIENT_ID:-}" ] && [ -n "''${XERO_CLIENT_SECRET:-}" ]; then
-      echo "Xero credentials loaded from $xero_secret"
+    missing=""
+    for var in XERO_CLIENT_ID XERO_CLIENT_SECRET EASYBILL_API_TOKEN; do
+      [ -n "$(printenv "$var")" ] || missing="$missing $var"
+    done
+    if [ -z "$missing" ]; then
+      echo "Credentials loaded from $xero_secret (Xero auth: ''${XERO_AUTH:-oauth})"
     else
-      echo "Xero credentials NOT loaded — expected $xero_secret as an env file" \
-           "or a directory with client_id/client_secret files."
+      echo "Not set:$missing — expected $xero_secret as an env file" \
+           "or a directory with one file per value (see shell.nix)."
     fi
+    unset missing var
   '';
 }

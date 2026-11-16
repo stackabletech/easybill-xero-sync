@@ -1,7 +1,7 @@
 /target/
 /.direnv/
 # Local secrets, state and config: never commit.
-.envrc
+.envrc.local
 *.secrets
 state*.json
 state*.json.tmp
