@@ -58,7 +58,9 @@ commit if it isn't obvious.
 - [ ] **Container build.** The OpenTelemetry dependencies haven't been built
   with the static Dockerfile yet (no C dependencies were added, so no problems
   are expected). The `Build/Publish Image` check on the first pull request
-  will show it; remove this item once that is green.
+  will show whether it builds. Also run the image once against Xero and
+  easybill: TLS roots now come from the image's CA bundle
+  (`rustls-native-certs`), and that hasn't been tried in `hi/static` yet.
 - [ ] **Dev shell with Nix and direnv.** The credential loading in
   `shell.nix` was only tested as plain bash; `nix-shell` and `direnv allow`
   with the committed `.envrc` haven't been run.

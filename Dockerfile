@@ -13,7 +13,8 @@
 #
 # DNS works without NSS modules: static glibc (>= 2.34) has the `files` and
 # `dns` lookups built in and reads /etc/hosts and /etc/resolv.conf. TLS roots
-# are compiled into the binary (webpki-roots).
+# come from the image's CA certificates (rustls-native-certs), so they follow
+# base image updates.
 #
 
 # Find the latest version:
