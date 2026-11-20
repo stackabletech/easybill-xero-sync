@@ -15,7 +15,7 @@
 
 use std::path::{Path, PathBuf};
 
-use chrono::Utc;
+use jiff::Timestamp;
 use snafu::{ResultExt, Snafu};
 
 use crate::state::{self, State, XeroState};
@@ -197,7 +197,7 @@ impl TokenManager {
             s.xero = Some(XeroState {
                 refresh_token: token.refresh_token.clone(),
                 tenant_id: existing.tenant_id.clone(),
-                obtained_at: Utc::now(),
+                obtained_at: Timestamp::now(),
             });
         })
         .context(PersistRotatedSnafu)?;

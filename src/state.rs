@@ -13,7 +13,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use snafu::{IntoError, OptionExt, ResultExt, Snafu};
 
@@ -162,7 +162,7 @@ pub struct DocumentRecord {
     pub status: DocumentStatus,
 
     /// When the document entered this status (kept while it doesn't change).
-    pub since: DateTime<Utc>,
+    pub since: Timestamp,
 
     /// The easybill document number.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -218,14 +218,14 @@ pub struct CustomerRecord {
     pub status: CustomerStatus,
 
     /// When the customer entered this status (kept while it doesn't change).
-    pub since: DateTime<Utc>,
+    pub since: Timestamp,
 }
 
 /// When a sync command last ran.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunRecord {
     /// When it last finished, successfully or not.
-    pub last_run: DateTime<Utc>,
+    pub last_run: Timestamp,
 
     /// Whether that run finished without a run-level error (failed items
     /// don't count).
@@ -233,16 +233,16 @@ pub struct RunRecord {
 
     /// When it last finished without a run-level error.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub last_success: Option<DateTime<Utc>>,
+    pub last_success: Option<Timestamp>,
 }
 
 /// The `since` for a status: kept from `previous` while the status is
 /// unchanged, else `now`.
 pub fn status_since<S: PartialEq>(
-    previous: Option<(S, DateTime<Utc>)>,
+    previous: Option<(S, Timestamp)>,
     status: S,
-    now: DateTime<Utc>,
-) -> DateTime<Utc> {
+    now: Timestamp,
+) -> Timestamp {
     match previous {
         Some((old, since)) if old == status => since,
         _ => now,
@@ -273,7 +273,7 @@ pub struct DocumentMapping {
     pub pdf_uploaded: bool,
 
     /// When this document was last synced (ISO 8601).
-    pub synced_at: DateTime<Utc>,
+    pub synced_at: Timestamp,
 }
 
 /// The persisted Xero authentication state. `Debug` redacts the token.
@@ -286,7 +286,7 @@ pub struct XeroState {
     pub tenant_id: String,
 
     /// When this refresh token was obtained.
-    pub obtained_at: DateTime<Utc>,
+    pub obtained_at: Timestamp,
 }
 
 impl std::fmt::Debug for XeroState {
@@ -455,6 +455,17 @@ mod tests {
     }
 
     #[test]
+    fn loads_timestamps_written_by_chrono() {
+        // State files written before the switch to jiff carry chrono's RFC 3339
+        // format, with nanoseconds where the clock provided them.
+        let json = r#"{"xero":{"refresh_token":"rt","tenant_id":"t","obtained_at":"2026-11-20T10:21:33.123456789Z"}}"#;
+        let state: State = serde_json::from_str(json).expect("chrono timestamps should load");
+        let obtained_at = state.xero.expect("xero should be present").obtained_at;
+        assert_eq!(obtained_at.as_second(), 1_795_170_093);
+        assert_eq!(obtained_at.subsec_nanosecond(), 123_456_789);
+    }
+
+    #[test]
     fn update_keeps_changes_made_since_load() {
         let path = temp_path("update");
         let stale = State::load(&path).expect("load succeeds");
@@ -478,7 +489,7 @@ mod tests {
                     xero_id: "x".to_owned(),
                     kind: DocumentKind::Invoice,
                     pdf_uploaded: false,
-                    synced_at: Utc::now(),
+                    synced_at: Timestamp::now(),
                 },
             );
         })
@@ -492,8 +503,8 @@ mod tests {
 
     #[test]
     fn status_since_is_kept_while_unchanged() {
-        let then: DateTime<Utc> = "2026-11-01T00:00:00Z".parse().expect("valid timestamp");
-        let now: DateTime<Utc> = "2026-11-11T08:00:00Z".parse().expect("valid timestamp");
+        let then: Timestamp = "2026-11-01T00:00:00Z".parse().expect("valid timestamp");
+        let now: Timestamp = "2026-11-11T08:00:00Z".parse().expect("valid timestamp");
         let failing = Some((DocumentStatus::FailedConfig, then));
         assert_eq!(
             status_since(failing, DocumentStatus::FailedConfig, now),

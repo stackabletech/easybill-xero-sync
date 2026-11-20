@@ -7,7 +7,7 @@ use std::path::Path;
 
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use base64::Engine as _;
-use chrono::Utc;
+use jiff::Timestamp;
 use reqwest::header::ACCEPT;
 use serde::de::DeserializeOwned;
 use snafu::{OptionExt, ResultExt, Snafu};
@@ -148,7 +148,7 @@ pub async fn login(state_override: Option<&Path>, port: u16, tenant: Option<&str
     current.xero = Some(XeroState {
         refresh_token: token.refresh_token.clone(),
         tenant_id: selected.tenant_id.clone(),
-        obtained_at: Utc::now(),
+        obtained_at: Timestamp::now(),
     });
     current.save(&path).context(StateSnafu)?;
 
@@ -188,7 +188,7 @@ pub async fn refresh(state_override: Option<&Path>) -> Result<()> {
     current.xero = Some(XeroState {
         refresh_token: token.refresh_token.clone(),
         tenant_id: existing.tenant_id.clone(),
-        obtained_at: Utc::now(),
+        obtained_at: Timestamp::now(),
     });
     current.save(&path).context(StateSnafu)?;
     tracing::debug!("rotated refresh token persisted");

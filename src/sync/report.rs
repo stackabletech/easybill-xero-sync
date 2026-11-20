@@ -16,7 +16,7 @@
 
 use std::path::Path;
 
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use opentelemetry::KeyValue;
 use snafu::ResultExt;
 
@@ -130,7 +130,7 @@ pub fn publish(state_override: Option<&Path>, command: &'static str, run_ok: boo
 /// Records the run in state and returns the updated state.
 fn record_run(state_override: Option<&Path>, command: &str, run_ok: bool) -> Result<State> {
     let path = state::resolve_path(state_override).context(StateSnafu)?;
-    let now = Utc::now();
+    let now = Timestamp::now();
     State::update(&path, |s| {
         let last_success = s.runs.get(command).and_then(|r| r.last_success);
         s.runs.insert(
@@ -269,8 +269,8 @@ fn export(points: &[Point]) {
 }
 
 /// A timestamp as Unix seconds.
-fn seconds(at: DateTime<Utc>) -> f64 {
-    at.timestamp() as f64
+fn seconds(at: Timestamp) -> f64 {
+    at.as_second() as f64
 }
 
 #[cfg(test)]
@@ -278,7 +278,7 @@ mod tests {
     use super::*;
     use crate::state::{CustomerRecord, DocumentRecord};
 
-    fn at(s: &str) -> DateTime<Utc> {
+    fn at(s: &str) -> Timestamp {
         s.parse().expect("valid timestamp")
     }
 

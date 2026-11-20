@@ -13,7 +13,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
-use chrono::{NaiveDateTime, Utc};
+use jiff::{civil, Timestamp};
 
 use snafu::{OptionExt, ResultExt};
 use tracing::Instrument as _;
@@ -36,7 +36,7 @@ use easybill::models::Customer;
 pub struct Options {
     /// Only sync customers whose easybill `updated_at` is `>=` this value
     /// (easybill local time); `None` syncs all.
-    pub since: Option<NaiveDateTime>,
+    pub since: Option<civil::DateTime>,
 
     /// If `true`, print the payloads that would be sent and make no API writes.
     pub dry_run: bool,
@@ -261,7 +261,7 @@ fn record_statuses(
     statuses: &[(i64, CustomerStatus)],
 ) -> Result<()> {
     let path = state::resolve_path(state_override).context(StateSnafu)?;
-    let now = Utc::now();
+    let now = Timestamp::now();
     State::update(&path, |s| {
         for &(id, status) in statuses {
             let key = id.to_string();
@@ -277,7 +277,7 @@ fn record_statuses(
 /// Whether a customer's `updated_at` is `>= since`. A customer whose
 /// `updated_at` is missing or unparseable counts as modified: syncing it again
 /// is harmless, skipping it silently is not.
-fn modified_since(customer: &Customer, since: Option<NaiveDateTime>) -> bool {
+fn modified_since(customer: &Customer, since: Option<civil::DateTime>) -> bool {
     let Some(since) = since else {
         return true;
     };
@@ -293,7 +293,7 @@ fn modified_since(customer: &Customer, since: Option<NaiveDateTime>) -> bool {
 /// then keeps the customers modified since `since`.
 fn plan_selected<'a>(
     customers: &'a [Customer],
-    since: Option<NaiveDateTime>,
+    since: Option<civil::DateTime>,
     config: &Config,
     existing: &ExistingIndex<'_>,
 ) -> Vec<Planned<'a>> {
@@ -304,10 +304,10 @@ fn plan_selected<'a>(
 }
 
 /// Parses an easybill timestamp (`"2025-01-15 14:20:41"`, local time).
-fn parse_easybill_timestamp(ts: &str) -> Option<NaiveDateTime> {
+fn parse_easybill_timestamp(ts: &str) -> Option<civil::DateTime> {
     let ts = ts.trim();
-    NaiveDateTime::parse_from_str(ts, "%Y-%m-%d %H:%M:%S")
-        .or_else(|_| NaiveDateTime::parse_from_str(ts, "%Y-%m-%dT%H:%M:%S"))
+    civil::DateTime::strptime("%Y-%m-%d %H:%M:%S", ts)
+        .or_else(|_| civil::DateTime::strptime("%Y-%m-%dT%H:%M:%S", ts))
         .ok()
 }
 
@@ -578,7 +578,7 @@ mod tests {
         assert_eq!(ids, vec![2, 3, 4]);
     }
 
-    fn at(ts: &str) -> NaiveDateTime {
+    fn at(ts: &str) -> civil::DateTime {
         parse_easybill_timestamp(ts).expect("valid timestamp")
     }
 

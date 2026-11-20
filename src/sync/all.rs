@@ -17,7 +17,7 @@ use crate::xero::token::AuthMode;
 #[derive(Debug, Clone)]
 pub struct Options {
     /// `--since` passed to the customer phase.
-    pub since: Option<chrono::NaiveDateTime>,
+    pub since: Option<jiff::civil::DateTime>,
 
     /// `--from` passed to the document phase.
     pub from: String,

@@ -2,8 +2,8 @@
 
 use std::path::PathBuf;
 
-use chrono::{NaiveDate, NaiveDateTime};
 use clap::{Args, Parser, Subcommand};
+use jiff::civil;
 
 use crate::xero::token::AuthMode;
 
@@ -99,16 +99,16 @@ pub struct SyncAllArgs {
     /// Only sync customers modified on or after this point in easybill's local
     /// time: `YYYY-MM-DD` or `YYYY-MM-DD HH:MM:SS` (or `T` instead of the space).
     #[arg(long, value_parser = parse_since)]
-    pub since: Option<NaiveDateTime>,
+    pub since: Option<civil::DateTime>,
 
     /// Inclusive start of the document-date window (`YYYY-MM-DD`).
     #[arg(long)]
-    pub from: NaiveDate,
+    pub from: civil::Date,
 
     /// Inclusive end of the document-date window (`YYYY-MM-DD`); open-ended if
     /// omitted.
     #[arg(long)]
-    pub to: Option<NaiveDate>,
+    pub to: Option<civil::Date>,
 
     /// Print the Xero payloads instead of sending them (no API writes).
     #[arg(long)]
@@ -124,12 +124,12 @@ pub struct SyncAllArgs {
 pub struct SyncDocumentsArgs {
     /// Inclusive start of the document-date window (`YYYY-MM-DD`).
     #[arg(long)]
-    pub from: NaiveDate,
+    pub from: civil::Date,
 
     /// Inclusive end of the document-date window (`YYYY-MM-DD`); open-ended if
     /// omitted.
     #[arg(long)]
-    pub to: Option<NaiveDate>,
+    pub to: Option<civil::Date>,
 
     /// Print the Xero payloads instead of sending them (no API writes).
     #[arg(long)]
@@ -146,7 +146,7 @@ pub struct SyncCustomersArgs {
     /// Only sync customers modified on or after this point in easybill's local
     /// time: `YYYY-MM-DD` or `YYYY-MM-DD HH:MM:SS` (or `T` instead of the space).
     #[arg(long, value_parser = parse_since)]
-    pub since: Option<NaiveDateTime>,
+    pub since: Option<civil::DateTime>,
 
     /// Print the Xero payloads instead of sending them (no API writes).
     #[arg(long)]
@@ -178,12 +178,12 @@ pub struct CheckArgs {
     /// all customers, and list every tax key in use with its `[tax]` mapping.
     /// Needs `EASYBILL_API_TOKEN`.
     #[arg(long)]
-    pub from: Option<NaiveDate>,
+    pub from: Option<civil::Date>,
 
     /// Inclusive end of the scanned document-date window (`YYYY-MM-DD`);
     /// open-ended if omitted.
     #[arg(long, requires = "from")]
-    pub to: Option<NaiveDate>,
+    pub to: Option<civil::Date>,
 
     /// Also list every scanned document line (document number, line, VAT
     /// rate, tax key and TaxType, booking account and AccountCode), flagging
@@ -209,15 +209,15 @@ pub struct LoginArgs {
 
 /// Parses `--since`: a date (midnight) or a date and time, without an offset
 /// (easybill timestamps are local time).
-fn parse_since(value: &str) -> Result<NaiveDateTime, String> {
+fn parse_since(value: &str) -> Result<civil::DateTime, String> {
     let value = value.trim();
     ["%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S"]
         .iter()
-        .find_map(|format| NaiveDateTime::parse_from_str(value, format).ok())
+        .find_map(|format| civil::DateTime::strptime(format, value).ok())
         .or_else(|| {
-            NaiveDate::parse_from_str(value, "%Y-%m-%d")
+            civil::Date::strptime("%Y-%m-%d", value)
                 .ok()
-                .and_then(|d| d.and_hms_opt(0, 0, 0))
+                .map(|d| d.to_datetime(civil::Time::midnight()))
         })
         .ok_or_else(|| {
             String::from(
@@ -273,7 +273,7 @@ mod tests {
     #[test]
     fn since_accepts_date_or_datetime_without_offset() {
         let midnight = parse_since("2026-06-01").expect("date");
-        assert_eq!(midnight.to_string(), "2026-06-01 00:00:00");
+        assert_eq!(midnight, civil::date(2026, 6, 1).at(0, 0, 0, 0));
         assert_eq!(
             parse_since("2026-06-01T09:30:00").expect("datetime"),
             parse_since("2026-06-01 09:30:00").expect("datetime")

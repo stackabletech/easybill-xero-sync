@@ -16,7 +16,7 @@
 
 use std::path::Path;
 
-use chrono::Utc;
+use jiff::Timestamp;
 use snafu::{OptionExt, ResultExt};
 use tracing::Instrument as _;
 
@@ -411,7 +411,7 @@ async fn sync_one(
         xero_id,
         kind,
         pdf_uploaded: false,
-        synced_at: Utc::now(),
+        synced_at: Timestamp::now(),
     };
 
     if let Some(existing) = &existing {
@@ -618,7 +618,7 @@ fn record_status(state: &mut State, document: &Document, status: DocumentStatus)
     };
     let record = DocumentRecord {
         status,
-        since: status_since(previous, status, Utc::now()),
+        since: status_since(previous, status, Timestamp::now()),
         number: document.number.clone(),
         customer_id: document.customer_id,
         amount_cents,
@@ -726,7 +726,7 @@ mod tests {
                 xero_id: "guid-7".to_owned(),
                 kind: DocumentKind::Invoice,
                 pdf_uploaded: false,
-                synced_at: Utc::now(),
+                synced_at: Timestamp::now(),
             },
         );
         assert_eq!(known_id(&state, 7), Some("guid-7"));

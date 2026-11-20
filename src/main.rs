@@ -44,8 +44,8 @@ enum Error {
     /// `--to` is before `--from`.
     #[snafu(display("--to {to} is before --from {from}"))]
     InvalidWindow {
-        from: chrono::NaiveDate,
-        to: chrono::NaiveDate,
+        from: jiff::civil::Date,
+        to: jiff::civil::Date,
     },
 
     /// The configuration file could not be loaded.
@@ -240,8 +240,8 @@ async fn run(cli: Cli) -> Result<(), Error> {
 
 /// Rejects a date window whose end is before its start.
 fn check_window(
-    from: Option<chrono::NaiveDate>,
-    to: Option<chrono::NaiveDate>,
+    from: Option<jiff::civil::Date>,
+    to: Option<jiff::civil::Date>,
 ) -> Result<(), Error> {
     match (from, to) {
         (Some(from), Some(to)) if to < from => InvalidWindowSnafu { from, to }.fail(),
