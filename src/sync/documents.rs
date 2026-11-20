@@ -16,28 +16,31 @@
 
 use std::path::Path;
 
+use easybill::{client::EasybillClient, models::Document};
 use jiff::Timestamp;
 use snafu::{OptionExt, ResultExt};
 use tracing::Instrument as _;
 
-use crate::config::Config;
-use crate::state::{
-    self, status_since, DocumentKind, DocumentMapping, DocumentRecord, DocumentStatus, State,
+use crate::{
+    config::Config,
+    state::{
+        self, DocumentKind, DocumentMapping, DocumentRecord, DocumentStatus, State, status_since,
+    },
+    sync::{
+        ClientSnafu, EasybillSnafu, EmptyResponseSnafu, Error, ItemsFailedSnafu, Result,
+        StateSnafu, TokenSnafu,
+    },
+    xero::{
+        attachment::{Resource, attachment_filename, attachment_path},
+        client::ApiClient,
+        document::{Mapped, map_document, verify_total},
+        models::{
+            CreditNoteResult, CreditNotesRequest, CreditNotesResponse, InvoiceResult,
+            InvoicesRequest, InvoicesResponse,
+        },
+        token::{AuthMode, TokenManager},
+    },
 };
-use crate::sync::{
-    ClientSnafu, EasybillSnafu, EmptyResponseSnafu, Error, ItemsFailedSnafu, Result, StateSnafu,
-    TokenSnafu,
-};
-use crate::xero::attachment::{attachment_filename, attachment_path, Resource};
-use crate::xero::client::ApiClient;
-use crate::xero::document::{map_document, verify_total, Mapped};
-use crate::xero::models::{
-    CreditNoteResult, CreditNotesRequest, CreditNotesResponse, InvoiceResult, InvoicesRequest,
-    InvoicesResponse,
-};
-use crate::xero::token::{AuthMode, TokenManager};
-use easybill::client::EasybillClient;
-use easybill::models::Document;
 
 /// Xero type of a sales invoice.
 const TYPE_ACCREC: &str = "ACCREC";

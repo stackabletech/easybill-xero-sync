@@ -5,9 +5,12 @@
 //! ISO country code is translated to an English country name (Xero expects the
 //! name, not the code).
 
-use crate::config::Config;
-use crate::xero::models::{Address, Contact, ContactPerson, PaymentTerm, PaymentTerms, Phone};
 use easybill::models::Customer;
+
+use crate::{
+    config::Config,
+    xero::models::{Address, Contact, ContactPerson, PaymentTerm, PaymentTerms, Phone},
+};
 
 /// The Xero payment-term basis matching easybill's `due_in_days`.
 const DAYS_AFTER_BILL_DATE: &str = "DAYSAFTERBILLDATE";

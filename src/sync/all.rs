@@ -9,9 +9,11 @@
 
 use std::path::Path;
 
-use crate::config::Config;
-use crate::sync::{customers, documents, Error, ItemsFailedSnafu, Result};
-use crate::xero::token::AuthMode;
+use crate::{
+    config::Config,
+    sync::{Error, ItemsFailedSnafu, Result, customers, documents},
+    xero::token::AuthMode,
+};
 
 /// Options for a `sync all` run.
 #[derive(Debug, Clone)]

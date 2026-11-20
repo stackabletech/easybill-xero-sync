@@ -20,8 +20,10 @@ use jiff::Timestamp;
 use opentelemetry::KeyValue;
 use snafu::ResultExt;
 
-use crate::state::{self, CustomerStatus, DocumentStatus, RunRecord, State};
-use crate::sync::{Result, StateSnafu};
+use crate::{
+    state::{self, CustomerStatus, DocumentStatus, RunRecord, State},
+    sync::{Result, StateSnafu},
+};
 
 /// One gauge of the snapshot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,19 +82,17 @@ impl Metric {
             Self::LastRunSuccess => {
                 "Whether a sync command's last run finished without a run-level error (1) or not (0)."
             }
-            Self::LastSuccess => "Unix time a sync command last finished without a run-level error.",
+            Self::LastSuccess => {
+                "Unix time a sync command last finished without a run-level error."
+            }
             Self::Documents => "Known easybill documents by sync status.",
             Self::Customers => "Known easybill customers by sync status.",
-            Self::DocumentIssueSince => {
-                "Unix time a document entered its current problem status."
-            }
+            Self::DocumentIssueSince => "Unix time a document entered its current problem status.",
             Self::DocumentIssueAmount => "Gross amount of a problem document, in its currency.",
             Self::DocumentIssueReportedAt => {
                 "Unix time of the run that reported this document problem."
             }
-            Self::CustomerIssueSince => {
-                "Unix time a customer entered its current problem status."
-            }
+            Self::CustomerIssueSince => "Unix time a customer entered its current problem status.",
             Self::CustomerIssueReportedAt => {
                 "Unix time of the run that reported this customer problem."
             }

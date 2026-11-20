@@ -260,14 +260,10 @@ mod tests {
             Cli::try_parse_from(["easybill-xero", "sync", "documents", "--from", "yesterday"])
                 .is_err()
         );
-        assert!(Cli::try_parse_from([
-            "easybill-xero",
-            "sync",
-            "documents",
-            "--from",
-            "2026-02-30"
-        ])
-        .is_err());
+        assert!(
+            Cli::try_parse_from(["easybill-xero", "sync", "documents", "--from", "2026-02-30"])
+                .is_err()
+        );
     }
 
     #[test]

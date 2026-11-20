@@ -16,16 +16,13 @@ mod sync;
 mod telemetry;
 mod xero;
 
-use std::error::Error as _;
-use std::path::PathBuf;
-use std::process::ExitCode;
+use std::{error::Error as _, path::PathBuf, process::ExitCode};
 
 use clap::Parser;
-use snafu::{ResultExt, Snafu};
-use tracing::Instrument as _;
-
 use cli::{Cli, Command, LogFormat, SyncCommand, XeroCommand};
 use config::Config;
+use snafu::{ResultExt, Snafu};
+use tracing::Instrument as _;
 use xero::token::AuthMode;
 
 /// Top-level binary error wrapping each subsystem's module-local error.

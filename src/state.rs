@@ -10,8 +10,10 @@
 //! Secrets other than the refresh token (client id/secret, easybill API key)
 //! never live here — they come from environment variables.
 
-use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+};
 
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
@@ -330,8 +332,7 @@ impl State {
     /// Returns [`Error::CreateDir`], [`Error::Serialise`], [`Error::WriteTemp`],
     /// or [`Error::Persist`] on the corresponding failure.
     pub fn save(&self, path: impl AsRef<Path>) -> Result<()> {
-        use std::io::Write;
-        use std::os::unix::fs::OpenOptionsExt;
+        use std::{io::Write, os::unix::fs::OpenOptionsExt};
 
         let path = path.as_ref();
         if let Some(parent) = path.parent() {

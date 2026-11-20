@@ -10,26 +10,30 @@
 //! The durable link is the contact's `ContactNumber` (the easybill id), which
 //! the upsert sets and which `sync documents` uses to resolve contacts.
 
-use std::collections::{HashMap, HashSet};
-use std::path::Path;
+use std::{
+    collections::{HashMap, HashSet},
+    path::Path,
+};
 
-use jiff::{civil, Timestamp};
-
+use easybill::{client::EasybillClient, models::Customer};
+use jiff::{Timestamp, civil};
 use snafu::{OptionExt, ResultExt};
 use tracing::Instrument as _;
 
-use crate::config::Config;
-use crate::state::{self, status_since, CustomerRecord, CustomerStatus, State};
-use crate::sync::{
-    ClientSnafu, EasybillSnafu, EmptyResponseSnafu, ItemsFailedSnafu, Result, StateSnafu,
-    TokenSnafu,
+use crate::{
+    config::Config,
+    state::{self, CustomerRecord, CustomerStatus, State, status_since},
+    sync::{
+        ClientSnafu, EasybillSnafu, EmptyResponseSnafu, ItemsFailedSnafu, Result, StateSnafu,
+        TokenSnafu,
+    },
+    xero::{
+        client::ApiClient,
+        contact::{map_customer, name_with_number_suffix},
+        models::{Contact, ContactResult, ContactsRequest},
+        token::{AuthMode, TokenManager},
+    },
 };
-use crate::xero::client::ApiClient;
-use crate::xero::contact::{map_customer, name_with_number_suffix};
-use crate::xero::models::{Contact, ContactResult, ContactsRequest};
-use crate::xero::token::{AuthMode, TokenManager};
-use easybill::client::EasybillClient;
-use easybill::models::Customer;
 
 /// Options for a `sync customers` run.
 #[derive(Debug, Clone, Default)]

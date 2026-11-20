@@ -8,8 +8,10 @@
 
 use std::time::Duration;
 
-use reqwest::header::{ACCEPT, RETRY_AFTER};
-use reqwest::StatusCode;
+use reqwest::{
+    StatusCode,
+    header::{ACCEPT, RETRY_AFTER},
+};
 use serde::de::DeserializeOwned;
 use snafu::{ResultExt, Snafu};
 

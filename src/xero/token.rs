@@ -18,9 +18,13 @@ use std::path::{Path, PathBuf};
 use jiff::Timestamp;
 use snafu::{ResultExt, Snafu};
 
-use crate::state::{self, State, XeroState};
-use crate::xero::auth;
-use crate::xero::models::{ClientCredentialsToken, TokenResponse};
+use crate::{
+    state::{self, State, XeroState},
+    xero::{
+        auth,
+        models::{ClientCredentialsToken, TokenResponse},
+    },
+};
 
 /// How the tool authenticates against Xero.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]

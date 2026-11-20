@@ -12,18 +12,26 @@
 //! with the Xero `AccountCode` it resolves to; one that is missing or inactive
 //! in the org is a problem, since Xero would reject the document.
 
-use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::Path,
+};
 
+use easybill::{
+    client::EasybillClient,
+    models::{Customer, Document},
+};
 use snafu::{ResultExt, Snafu};
 
-use crate::config::Config;
-use crate::sync::documents::{document_filters, without_skipped};
-use crate::xero::client::{self, ApiClient};
-use crate::xero::models::{Account, TaxRate};
-use crate::xero::token::{self, AuthMode, TokenManager};
-use easybill::client::EasybillClient;
-use easybill::models::{Customer, Document};
+use crate::{
+    config::Config,
+    sync::documents::{document_filters, without_skipped},
+    xero::{
+        client::{self, ApiClient},
+        models::{Account, TaxRate},
+        token::{self, AuthMode, TokenManager},
+    },
+};
 
 /// Errors arising from `xero check`.
 #[derive(Debug, Snafu)]
@@ -916,9 +924,11 @@ default = "200"
 
         // Without a scan: no counts, plus a hint.
         let report = tax_keys_report(&config(), None);
-        assert!(report_lines(&report)
-            .iter()
-            .any(|l| l == "null/20 -> OUTPUT2"));
+        assert!(
+            report_lines(&report)
+                .iter()
+                .any(|l| l == "null/20 -> OUTPUT2")
+        );
         assert!(report.contains("pass --from"));
     }
 
