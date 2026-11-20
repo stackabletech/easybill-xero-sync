@@ -26,13 +26,23 @@ grafana/           dashboard for the monitoring snapshot
 
 ## Before you finish a change
 
-CI runs exactly these, all must pass:
+CI runs the hooks in `.pre-commit-config.yaml` (through prek) and
+`cargo-udeps`; all must pass. The Rust part of it:
 
 ```sh
-cargo fmt --all --check
+cargo +nightly-2026-11-02 fmt --all --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --locked
+RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --document-private-items --locked
+cargo deny --all-features check advisories bans licenses sources
+RUSTC_BOOTSTRAP=1 cargo udeps --workspace --all-targets --locked
 ```
+
+`prek run --all-files` runs everything except `cargo-udeps`, including the
+YAML, Markdown, Dockerfile and spelling lints. Formatting needs the nightly
+toolchain (unstable options in `rustfmt.toml`). `deny.toml`, `rustfmt.toml`
+and the lint configs are copied from stackabletech/operator-templating; keep
+them in sync rather than editing them here.
 
 Update `README.md` when behaviour, options, environment variables or metrics
 change.
@@ -109,7 +119,8 @@ the README table and the dashboard legend panel.
 This repo follows the Stackable Rust style guide; the points that matter
 most, and where this repo differs:
 
-**Errors**
+### Errors
+
 - `snafu` only (no `thiserror`, no `anyhow`). One `Error` enum per module,
   explicit `.context(…Snafu)` at every call site; never
   `#[snafu(context(false))]`.
@@ -121,19 +132,22 @@ most, and where this repo differs:
 - Use `crate::sync::error_chain` to log an error with its full source chain
   on one line.
 
-**Panics**
+### Panics
+
 - No `unwrap()`, also not in tests. `unwrap_or*` are fine.
 - `expect("…")` only where failure is impossible; the message states the
   invariant (`must` in production code, `should` in tests).
 
-**Types and signatures**
+### Types and signatures
+
 - No sentinel values (empty string, `-1`) for "nothing": use `Option`.
 - Take owned values when you need ownership, instead of cloning a reference
   inside.
 - `Option` variables carry no `maybe_` / `opt_` prefix. Use full words for
   names, except in closures.
 
-**Formatting and docs**
+### Formatting and docs
+
 - `format!`/`println!` with three or more substitutions use named arguments.
   Some older code still uses positional ones; fix them when you touch it.
 - Every item gets a doc comment (summary sentence ending in a full stop);
@@ -143,7 +157,8 @@ most, and where this repo differs:
 - Enum variants and struct fields with doc comments or attributes are
   separated by blank lines.
 
-**Tests**
+### Tests
+
 - Unit tests live in a `#[cfg(test)] mod tests` in the same file.
 - Names describe what is verified, without a `test_` prefix.
 - Prefer `assert_eq!` over `assert!`. For several inputs the guide asks for
@@ -152,7 +167,8 @@ most, and where this repo differs:
 - No network in tests. Keep mapping and classification logic pure so it can
   be tested without the APIs (see `snapshot` in `src/sync/report.rs`).
 
-**Dependencies**
+### Dependencies
+
 - Check the licence before adding a crate: it must be compatible with
   Apache-2.0, the project's licence.
 - Keep the binary statically linkable: avoid crates with C dependencies, and

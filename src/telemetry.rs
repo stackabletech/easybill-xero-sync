@@ -20,14 +20,16 @@ use std::time::Duration;
 
 use opentelemetry::trace::{TraceContextExt as _, TracerProvider as _};
 use opentelemetry_otlp::{WithExportConfig as _, WithHttpConfig as _};
-use opentelemetry_sdk::metrics::{PeriodicReader, SdkMeterProvider};
-use opentelemetry_sdk::trace::SdkTracerProvider;
-use opentelemetry_sdk::Resource;
+use opentelemetry_sdk::{
+    Resource,
+    metrics::{PeriodicReader, SdkMeterProvider},
+    trace::SdkTracerProvider,
+};
 use snafu::{ResultExt, Snafu};
 use tracing_opentelemetry::OpenTelemetrySpanExt as _;
-use tracing_subscriber::layer::SubscriberExt as _;
-use tracing_subscriber::util::SubscriberInitExt as _;
-use tracing_subscriber::{fmt, EnvFilter, Layer as _};
+use tracing_subscriber::{
+    EnvFilter, Layer as _, fmt, layer::SubscriberExt as _, util::SubscriberInitExt as _,
+};
 
 use crate::cli::LogFormat;
 

@@ -1,0 +1,17 @@
+# Taken from stackabletech/operator-templating (without the Helm ignore),
+# keep in sync.
+---
+extends: default
+
+rules:
+  line-length: disable
+  truthy:
+    check-keys: false
+  comments:
+    min-spaces-from-content: 1  # Needed due to https://github.com/adrienverge/yamllint/issues/443
+  indentation:
+    indent-sequences: consistent
+  comments-indentation: disable # This is generally useless and interferes with commented example values
+  braces:
+    max-spaces-inside: 1
+    max-spaces-inside-empty: 0

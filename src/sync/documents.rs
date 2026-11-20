@@ -16,28 +16,31 @@
 
 use std::path::Path;
 
-use chrono::Utc;
+use easybill::{client::EasybillClient, models::Document};
+use jiff::Timestamp;
 use snafu::{OptionExt, ResultExt};
 use tracing::Instrument as _;
 
-use crate::config::Config;
-use crate::state::{
-    self, status_since, DocumentKind, DocumentMapping, DocumentRecord, DocumentStatus, State,
+use crate::{
+    config::Config,
+    state::{
+        self, DocumentKind, DocumentMapping, DocumentRecord, DocumentStatus, State, status_since,
+    },
+    sync::{
+        ClientSnafu, EasybillSnafu, EmptyResponseSnafu, Error, ItemsFailedSnafu, Result,
+        StateSnafu, TokenSnafu,
+    },
+    xero::{
+        attachment::{Resource, attachment_filename, attachment_path},
+        client::ApiClient,
+        document::{Mapped, map_document, verify_total},
+        models::{
+            CreditNoteResult, CreditNotesRequest, CreditNotesResponse, InvoiceResult,
+            InvoicesRequest, InvoicesResponse,
+        },
+        token::{AuthMode, TokenManager},
+    },
 };
-use crate::sync::{
-    ClientSnafu, EasybillSnafu, EmptyResponseSnafu, Error, ItemsFailedSnafu, Result, StateSnafu,
-    TokenSnafu,
-};
-use crate::xero::attachment::{attachment_filename, attachment_path, Resource};
-use crate::xero::client::ApiClient;
-use crate::xero::document::{map_document, verify_total, Mapped};
-use crate::xero::models::{
-    CreditNoteResult, CreditNotesRequest, CreditNotesResponse, InvoiceResult, InvoicesRequest,
-    InvoicesResponse,
-};
-use crate::xero::token::{AuthMode, TokenManager};
-use easybill::client::EasybillClient;
-use easybill::models::Document;
 
 /// Xero type of a sales invoice.
 const TYPE_ACCREC: &str = "ACCREC";
@@ -411,7 +414,7 @@ async fn sync_one(
         xero_id,
         kind,
         pdf_uploaded: false,
-        synced_at: Utc::now(),
+        synced_at: Timestamp::now(),
     };
 
     if let Some(existing) = &existing {
@@ -618,7 +621,7 @@ fn record_status(state: &mut State, document: &Document, status: DocumentStatus)
     };
     let record = DocumentRecord {
         status,
-        since: status_since(previous, status, Utc::now()),
+        since: status_since(previous, status, Timestamp::now()),
         number: document.number.clone(),
         customer_id: document.customer_id,
         amount_cents,
@@ -726,7 +729,7 @@ mod tests {
                 xero_id: "guid-7".to_owned(),
                 kind: DocumentKind::Invoice,
                 pdf_uploaded: false,
-                synced_at: Utc::now(),
+                synced_at: Timestamp::now(),
             },
         );
         assert_eq!(known_id(&state, 7), Some("guid-7"));

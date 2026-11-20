@@ -16,16 +16,13 @@ mod sync;
 mod telemetry;
 mod xero;
 
-use std::error::Error as _;
-use std::path::PathBuf;
-use std::process::ExitCode;
+use std::{error::Error as _, path::PathBuf, process::ExitCode};
 
 use clap::Parser;
-use snafu::{ResultExt, Snafu};
-use tracing::Instrument as _;
-
 use cli::{Cli, Command, LogFormat, SyncCommand, XeroCommand};
 use config::Config;
+use snafu::{ResultExt, Snafu};
+use tracing::Instrument as _;
 use xero::token::AuthMode;
 
 /// Top-level binary error wrapping each subsystem's module-local error.
@@ -44,8 +41,8 @@ enum Error {
     /// `--to` is before `--from`.
     #[snafu(display("--to {to} is before --from {from}"))]
     InvalidWindow {
-        from: chrono::NaiveDate,
-        to: chrono::NaiveDate,
+        from: jiff::civil::Date,
+        to: jiff::civil::Date,
     },
 
     /// The configuration file could not be loaded.
@@ -240,8 +237,8 @@ async fn run(cli: Cli) -> Result<(), Error> {
 
 /// Rejects a date window whose end is before its start.
 fn check_window(
-    from: Option<chrono::NaiveDate>,
-    to: Option<chrono::NaiveDate>,
+    from: Option<jiff::civil::Date>,
+    to: Option<jiff::civil::Date>,
 ) -> Result<(), Error> {
     match (from, to) {
         (Some(from), Some(to)) if to < from => InvalidWindowSnafu { from, to }.fail(),

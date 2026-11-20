@@ -1,0 +1,32 @@
+---
+# Runs the hooks in .pre-commit-config.yaml on the files a pull request
+# changes (lints, cargo-deny, rustfmt, clippy, tests). Modelled after
+# stackabletech/operator-templating.
+name: prek
+
+on:
+  pull_request:
+
+permissions: {}
+
+env:
+  CARGO_TERM_COLOR: always
+  # Keep in sync with the cargo-rustfmt hook in .pre-commit-config.yaml. The
+  # stable toolchain comes from rust-toolchain.toml.
+  RUST_NIGHTLY_TOOLCHAIN_VERSION: "nightly-2026-11-02"
+  HADOLINT_VERSION: "v2.15.1"
+
+jobs:
+  prek:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: stackabletech/actions/run-prek@d5c85b3cef351617f19de803812b42b839e20168 # v0.18.4
+        with:
+          rust: ${{ env.RUST_NIGHTLY_TOOLCHAIN_VERSION }}
+          hadolint: ${{ env.HADOLINT_VERSION }}

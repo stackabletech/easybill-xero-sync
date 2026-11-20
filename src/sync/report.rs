@@ -16,12 +16,14 @@
 
 use std::path::Path;
 
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use opentelemetry::KeyValue;
 use snafu::ResultExt;
 
-use crate::state::{self, CustomerStatus, DocumentStatus, RunRecord, State};
-use crate::sync::{Result, StateSnafu};
+use crate::{
+    state::{self, CustomerStatus, DocumentStatus, RunRecord, State},
+    sync::{Result, StateSnafu},
+};
 
 /// One gauge of the snapshot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,19 +82,17 @@ impl Metric {
             Self::LastRunSuccess => {
                 "Whether a sync command's last run finished without a run-level error (1) or not (0)."
             }
-            Self::LastSuccess => "Unix time a sync command last finished without a run-level error.",
+            Self::LastSuccess => {
+                "Unix time a sync command last finished without a run-level error."
+            }
             Self::Documents => "Known easybill documents by sync status.",
             Self::Customers => "Known easybill customers by sync status.",
-            Self::DocumentIssueSince => {
-                "Unix time a document entered its current problem status."
-            }
+            Self::DocumentIssueSince => "Unix time a document entered its current problem status.",
             Self::DocumentIssueAmount => "Gross amount of a problem document, in its currency.",
             Self::DocumentIssueReportedAt => {
                 "Unix time of the run that reported this document problem."
             }
-            Self::CustomerIssueSince => {
-                "Unix time a customer entered its current problem status."
-            }
+            Self::CustomerIssueSince => "Unix time a customer entered its current problem status.",
             Self::CustomerIssueReportedAt => {
                 "Unix time of the run that reported this customer problem."
             }
@@ -130,7 +130,7 @@ pub fn publish(state_override: Option<&Path>, command: &'static str, run_ok: boo
 /// Records the run in state and returns the updated state.
 fn record_run(state_override: Option<&Path>, command: &str, run_ok: bool) -> Result<State> {
     let path = state::resolve_path(state_override).context(StateSnafu)?;
-    let now = Utc::now();
+    let now = Timestamp::now();
     State::update(&path, |s| {
         let last_success = s.runs.get(command).and_then(|r| r.last_success);
         s.runs.insert(
@@ -269,8 +269,8 @@ fn export(points: &[Point]) {
 }
 
 /// A timestamp as Unix seconds.
-fn seconds(at: DateTime<Utc>) -> f64 {
-    at.timestamp() as f64
+fn seconds(at: Timestamp) -> f64 {
+    at.as_second() as f64
 }
 
 #[cfg(test)]
@@ -278,7 +278,7 @@ mod tests {
     use super::*;
     use crate::state::{CustomerRecord, DocumentRecord};
 
-    fn at(s: &str) -> DateTime<Utc> {
+    fn at(s: &str) -> Timestamp {
         s.parse().expect("valid timestamp")
     }
 

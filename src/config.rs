@@ -22,8 +22,10 @@
 //!                          # covers lines without one
 //! ```
 
-use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+};
 
 use serde::Deserialize;
 use snafu::{OptionExt, ResultExt, Snafu};

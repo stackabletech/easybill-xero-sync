@@ -1,0 +1,87 @@
+# Modelled after stackabletech/operator-templating; the hook versions are kept
+# in sync with it. Hooks for Helm, Nix, Python and README rendering are left
+# out, as this repo has none of those.
+---
+repos:
+  - repo: https://github.com/crate-ci/typos
+    rev: 7f9d0819ca1c008ade73f4b41fa9d258d48f605b  # v1.51.1
+    hooks:
+      - id: typos
+        # Drop the upstream default `--write-changes` so the hook only
+        # reports failures instead of writing changes.
+        args: ["--force-exclude"]
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: 3e8a8703264a2f4a69428a0aa4dcb512790b2c8c # 6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: detect-aws-credentials
+        args: ["--allow-missing-credentials"]
+      - id: detect-private-key
+
+  - repo: https://github.com/EmbarkStudios/cargo-deny
+    rev: 1c9ca2b643ee15722178c1350501aabb024dd6f3 # 0.19.9
+    hooks:
+      - id: cargo-deny
+        args: ["--all-features", "check", "advisories", "bans", "licenses", "sources"]
+
+  - repo: https://github.com/adrienverge/yamllint
+    rev: 79a6b2b1392eaf49cdd32ac4f14be1a809bbd8f7 # 1.37.1
+    hooks:
+      - id: yamllint
+        args: ["--strict"]
+
+  - repo: https://github.com/igorshubovych/markdownlint-cli
+    rev: cbcdc463be5464e25e3e955a511599a67b9b987f # 0.50.0
+    hooks:
+      - id: markdownlint
+        types: [text]
+        files: \.md$
+
+  - repo: https://github.com/rhysd/actionlint
+    rev: 914e7df21a07ef503a81201c76d2b11c789d3fca # 1.7.12
+    hooks:
+      - id: actionlint
+
+  - repo: https://github.com/hadolint/hadolint
+    rev: 2eece55955ced00200be9729e9728cb7dacca505 # 2.15.1
+    hooks:
+      - id: hadolint
+
+  - repo: local
+    hooks:
+      - id: cargo-doc
+        name: cargo-doc
+        language: system
+        env:
+          RUSTDOCFLAGS: "-D warnings"
+        entry: cargo doc --workspace --no-deps --document-private-items --locked
+        stages: [pre-commit, pre-merge-commit]
+        pass_filenames: false
+        files: \.rs$|Cargo\.(toml|lock)
+
+      - id: cargo-test
+        name: cargo-test
+        language: system
+        entry: cargo test --workspace --locked
+        stages: [pre-commit, pre-merge-commit]
+        pass_filenames: false
+        files: \.rs$|Cargo\.(toml|lock)
+
+      - id: cargo-rustfmt
+        name: cargo-rustfmt
+        language: system
+        # Keep the nightly version in sync with .github/workflows/pr_prek.yaml.
+        entry: cargo +nightly-2026-11-02 fmt --all -- --check
+        stages: [pre-commit, pre-merge-commit]
+        pass_filenames: false
+        files: \.rs$
+
+      - id: cargo-clippy
+        name: cargo-clippy
+        language: system
+        entry: cargo clippy --workspace --all-targets --locked -- -D warnings
+        stages: [pre-commit, pre-merge-commit]
+        pass_filenames: false
+        files: \.rs$|Cargo\.(toml|lock)

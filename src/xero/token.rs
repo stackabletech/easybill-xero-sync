@@ -15,12 +15,16 @@
 
 use std::path::{Path, PathBuf};
 
-use chrono::Utc;
+use jiff::Timestamp;
 use snafu::{ResultExt, Snafu};
 
-use crate::state::{self, State, XeroState};
-use crate::xero::auth;
-use crate::xero::models::{ClientCredentialsToken, TokenResponse};
+use crate::{
+    state::{self, State, XeroState},
+    xero::{
+        auth,
+        models::{ClientCredentialsToken, TokenResponse},
+    },
+};
 
 /// How the tool authenticates against Xero.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
@@ -197,7 +201,7 @@ impl TokenManager {
             s.xero = Some(XeroState {
                 refresh_token: token.refresh_token.clone(),
                 tenant_id: existing.tenant_id.clone(),
-                obtained_at: Utc::now(),
+                obtained_at: Timestamp::now(),
             });
         })
         .context(PersistRotatedSnafu)?;

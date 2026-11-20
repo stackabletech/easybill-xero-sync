@@ -11,20 +11,25 @@
 //! validation responses echo the whole invoice or contact, which must not end
 //! up in logs.
 
-use std::sync::Mutex;
-use std::time::{Duration, Instant};
+use std::{
+    sync::Mutex,
+    time::{Duration, Instant},
+};
 
-use reqwest::header::{ACCEPT, RETRY_AFTER};
-use reqwest::{Method, StatusCode};
-use serde::de::DeserializeOwned;
-use serde::Serialize;
+use reqwest::{
+    Method, StatusCode,
+    header::{ACCEPT, RETRY_AFTER},
+};
+use serde::{Serialize, de::DeserializeOwned};
 use snafu::{ResultExt, Snafu};
 
-use crate::xero::models::{
-    AccountsResponse, ContactResult, ContactsRequest, ContactsResponse, CreditNotesRequest,
-    CreditNotesResponse, InvoicesRequest, InvoicesResponse, TaxRatesResponse,
+use crate::xero::{
+    models::{
+        AccountsResponse, ContactResult, ContactsRequest, ContactsResponse, CreditNotesRequest,
+        CreditNotesResponse, InvoicesRequest, InvoicesResponse, TaxRatesResponse,
+    },
+    token::{self, AccessContext, TokenManager},
 };
-use crate::xero::token::{self, AccessContext, TokenManager};
 
 /// The Accounting API base URL (trailing slash so paths join cleanly).
 const API_BASE: &str = "https://api.xero.com/api.xro/2.0/";
@@ -633,7 +638,7 @@ mod tests {
     }
 
     #[test]
-    fn retry_after_defaults_when_unparseable() {
+    fn retry_after_defaults_when_unparsable() {
         let mut headers = reqwest::header::HeaderMap::new();
         headers.insert(
             RETRY_AFTER,

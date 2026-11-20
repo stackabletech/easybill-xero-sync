@@ -8,13 +8,14 @@
 //! missing mapping fails the *document* (returned as an error) rather than
 //! silently producing a wrong invoice.
 
-use rust_decimal::prelude::FromPrimitive;
-use rust_decimal::{Decimal, RoundingStrategy};
+use easybill::models::{Document, DocumentItem};
+use rust_decimal::{Decimal, RoundingStrategy, prelude::FromPrimitive};
 use snafu::{OptionExt, ResultExt, Snafu};
 
-use crate::config::{self, Config};
-use crate::xero::models::{ContactRef, CreditNote, Invoice, LineItem};
-use easybill::models::{Document, DocumentItem};
+use crate::{
+    config::{self, Config},
+    xero::models::{ContactRef, CreditNote, Invoice, LineItem},
+};
 
 /// The easybill document type for invoices.
 const TYPE_INVOICE: &str = "INVOICE";
@@ -355,8 +356,9 @@ pub struct TotalMismatch {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use rust_decimal_macros::dec;
+
+    use super::*;
 
     fn config() -> Config {
         toml::from_str(
@@ -439,7 +441,7 @@ default = "200"
         let second = &inv.line_items[1];
         assert_eq!(second.description, "License");
         assert_eq!(second.account_code, "200"); // no booking account -> default
-                                                // 10% of 16000.00, taken from easybill's line total.
+        // 10% of 16000.00, taken from easybill's line total.
         assert_eq!(second.discount_amount, Some(dec!(1600)));
     }
 

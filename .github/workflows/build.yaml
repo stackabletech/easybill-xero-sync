@@ -3,11 +3,12 @@
 #
 # - a tag `vX.Y.Z` publishes `X.Y.Z` (the tag must match the Cargo.toml version)
 # - a push to `main` publishes `0.0.0-dev` (floating) and `0.0.0-dev-<sha>`
-# - a pull request only runs the checks and a test build (nothing is pushed)
+# - a pull request only runs a test build (nothing is pushed) and cargo-udeps;
+#   the other checks are in pr_prek.yaml
 #
 # Repository settings needed:
 # - variable `REGISTRY_NAMESPACE`: the Harbor project on oci.stackable.tech
-# - secret `HARBOR_ROBOT_SECRET`: the secret of the robot account
+# - secret `HARBOR_ROBOT_STACKABLE_GITHUB_ACTION_BUILD_SECRET`: the secret of the robot account
 #   `robot$<REGISTRY_NAMESPACE>+github-action-build`
 name: Build
 
@@ -26,30 +27,45 @@ concurrency:
 env:
   REGISTRY: oci.stackable.tech
   IMAGE_NAME: easybill-xero
-  # Keep in sync with the builder image in the Dockerfile.
-  RUST_TOOLCHAIN: 1.99.1
 
 jobs:
-  check:
-    name: Check
+  cargo-udeps:
+    name: Run cargo-udeps
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    env:
+      # cargo-udeps needs nightly features; this unlocks them on the stable
+      # toolchain from rust-toolchain.toml, as the operators do.
+      RUSTC_BOOTSTRAP: 1
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
-        with:
-          toolchain: ${{ env.RUST_TOOLCHAIN }}
-          components: clippy, rustfmt
-
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: udeps
 
-      - run: cargo fmt --all --check
-      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
-      - run: cargo test --workspace --locked
+      - uses: stackabletech/cargo-install-action@e3e2dcf8d0f0e5bdbc619bf6ee7560dd68152d3c
+        with:
+          crate: cargo-udeps
+
+      - run: cargo udeps --workspace --all-targets --locked
+
+  build:
+    name: Build/Publish Image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Keyless cosign signing.
+      id-token: write
+    env:
+      PUBLISH: ${{ github.event_name == 'push' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Check that the tag matches the Cargo.toml version
         if: startsWith(github.ref, 'refs/tags/v')
@@ -62,21 +78,6 @@ jobs:
             echo "Tag $TAG does not match the Cargo.toml version $version" >&2
             exit 1
           fi
-
-  build:
-    name: Build/Publish Image
-    needs: check
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      # Keyless cosign signing.
-      id-token: write
-    env:
-      PUBLISH: ${{ github.event_name == 'push' }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
 
       - name: Check repository settings
         if: env.PUBLISH == 'true'
