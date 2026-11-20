@@ -638,7 +638,7 @@ mod tests {
     }
 
     #[test]
-    fn retry_after_defaults_when_unparseable() {
+    fn retry_after_defaults_when_unparsable() {
         let mut headers = reqwest::header::HeaderMap::new();
         headers.insert(
             RETRY_AFTER,

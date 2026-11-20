@@ -147,7 +147,8 @@ easybill customer number. A linked contact is updated in place and gets
 `ContactNumber` set, so later runs link by that. Otherwise a new contact is
 created.
 
-Colliding display names get a ` (<number>)` suffix (Xero requires unique names).
+Colliding display names get a numbered suffix such as `Acme (2)` (Xero requires
+unique names).
 A customer is **blocked** instead when its `AccountNumber` matches several
 unlinked contacts, or when it would get a new contact whose name matches an
 existing contact that isn't linked to any easybill customer (most likely the
@@ -198,13 +199,13 @@ and an expiring access token is renewed during long runs.
 
 Every log line carries the context it was logged in, as `tracing` spans:
 
-| Span                                 | Fields                                                  |
-|--------------------------------------|---------------------------------------------------------|
-| `run`                                | `run_id`, `command`                                     |
-| `sync_customers` / `sync_documents`  | the command's options                                   |
-| `customer`                           | `customer_id`, `contact_id`                             |
-| `document`                           | `document_id`, `number`, `xero_id`, `outcome`           |
-| `xero_request` / `easybill_request`  | `context` (e.g. `PUT /Invoices`), `http.response.status_code` |
+| Span                                | Fields                                                        |
+|-------------------------------------|---------------------------------------------------------------|
+| `run`                               | `run_id`, `command`                                           |
+| `sync_customers` / `sync_documents` | the command's options                                         |
+| `customer`                          | `customer_id`, `contact_id`                                   |
+| `document`                          | `document_id`, `number`, `xero_id`, `outcome`                 |
+| `xero_request` / `easybill_request` | `context` (e.g. `PUT /Invoices`), `http.response.status_code` |
 
 In JSON, `span` is the innermost span and `spans` the whole stack, so every
 line can be filtered by `run_id` or `document_id`. In JSON mode the final
@@ -234,17 +235,17 @@ Document statuses: `synced`, `approved_in_xero`, `skipped` (fine), and
 `ok`, `blocked`, `failed`. A document failing for a reason other than its own
 data counts as `failed_customer` if its customer's last sync failed.
 
-| Metric                                                         | Labels                                                         |
-|----------------------------------------------------------------|----------------------------------------------------------------|
-| `easybill_xero_last_run_timestamp_seconds`                     | `command`                                                      |
-| `easybill_xero_last_run_success` (1/0, failed items don't count) | `command`                                                    |
-| `easybill_xero_last_success_timestamp_seconds`                 | `command`                                                      |
-| `easybill_xero_documents` / `easybill_xero_customers` (counts) | `status`                                                       |
-| `easybill_xero_document_issue_since_timestamp_seconds`         | `document_id`, `number`, `status`, `customer_id`, `currency`   |
-| `easybill_xero_document_issue_amount` (gross, credit notes negative) | same                                                     |
-| `easybill_xero_document_issue_reported_at_timestamp_seconds`   | same                                                           |
-| `easybill_xero_customer_issue_since_timestamp_seconds`         | `customer_id`, `status`                                        |
-| `easybill_xero_customer_issue_reported_at_timestamp_seconds`   | `customer_id`, `status`                                        |
+| Metric                                                               | Labels                                                       |
+|----------------------------------------------------------------------|--------------------------------------------------------------|
+| `easybill_xero_last_run_timestamp_seconds`                           | `command`                                                    |
+| `easybill_xero_last_run_success` (1/0, failed items don't count)     | `command`                                                    |
+| `easybill_xero_last_success_timestamp_seconds`                       | `command`                                                    |
+| `easybill_xero_documents` / `easybill_xero_customers` (counts)       | `status`                                                     |
+| `easybill_xero_document_issue_since_timestamp_seconds`               | `document_id`, `number`, `status`, `customer_id`, `currency` |
+| `easybill_xero_document_issue_amount` (gross, credit notes negative) | same                                                         |
+| `easybill_xero_document_issue_reported_at_timestamp_seconds`         | same                                                         |
+| `easybill_xero_customer_issue_since_timestamp_seconds`               | `customer_id`, `status`                                      |
+| `easybill_xero_customer_issue_reported_at_timestamp_seconds`         | `customer_id`, `status`                                      |
 
 The values are written once per run, so between runs Prometheus has no
 current sample: query with `last_over_time(…[25h])` (longer than the
@@ -284,19 +285,37 @@ The entrypoint is the binary; pass the command as arguments. It runs as uid
 
 ## CI
 
-[`.github/workflows/build.yaml`](./.github/workflows/build.yaml) runs
-`cargo fmt`, `clippy` and the tests, then builds the image:
+Pull requests run these checks; all are meant to be required before merging:
+
+| Check                 | Workflow                                           | What it runs                                                                                                                                                                        |
+|-----------------------|----------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `prek`                | [`pr_prek.yaml`](./.github/workflows/pr_prek.yaml) | the hooks in [`.pre-commit-config.yaml`](./.pre-commit-config.yaml): typos, cargo-deny, yamllint, markdownlint, actionlint, hadolint, `cargo doc`, nightly `rustfmt`, clippy, tests |
+| `Run cargo-udeps`     | [`build.yaml`](./.github/workflows/build.yaml)     | unused dependencies                                                                                                                                                                 |
+| `Build/Publish Image` | [`build.yaml`](./.github/workflows/build.yaml)     | a test build of the image                                                                                                                                                           |
+
+prek only runs the hooks whose files a pull request changes. To run them
+locally, install [prek](https://github.com/j178/prek), cargo-deny, hadolint and
+the nightly toolchain named in `pr_prek.yaml`, then `prek install` (on every
+commit) or `prek run --all-files`. A daily job
+([`general_daily_security.yml`](./.github/workflows/general_daily_security.yml))
+checks the dependencies against the RustSec advisory database, so new
+advisories show up without a pull request. The setup follows the Stackable
+operators; `deny.toml`, `rustfmt.toml` and the lint configs are copies of
+theirs.
+
+[`build.yaml`](./.github/workflows/build.yaml) publishes the image:
 
 | Trigger         | Published tags                                         |
 |-----------------|--------------------------------------------------------|
 | tag `vX.Y.Z`    | `X.Y.Z` (the tag must match the `Cargo.toml` version)  |
 | push to `main`  | `0.0.0-dev` (floating) and `0.0.0-dev-<sha>`           |
-| pull request    | none (checks and a test build only)                    |
+| pull request    | none (test build only)                                 |
 
 Images are published for `linux/amd64` to
 `oci.stackable.tech/<namespace>/easybill-xero`, where `<namespace>` is the Harbor
 project set in the repository variable `REGISTRY_NAMESPACE`; the robot account's
-secret is the repository secret `HARBOR_ROBOT_SECRET`. Published images are
+secret is the repository secret
+`HARBOR_ROBOT_STACKABLE_GITHUB_ACTION_BUILD_SECRET`. Published images are
 signed with cosign (keyless, via the workflow's GitHub identity):
 
 ```bash

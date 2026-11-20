@@ -1,0 +1,32 @@
+---
+# Checks the dependencies against the RustSec advisory database every day,
+# so new advisories show up even when no pull request touches Cargo.lock.
+# Taken from stackabletech/operator-templating.
+name: Daily Security Audit
+
+on:
+  schedule:
+    - cron: "15 4 * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # rustsec/audit-check publishes its results as a Check run, which requires this scope
+      checks: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: rustsec/audit-check@69366f33c96575abad1ee0dba8212993eecbe998 # v2.0.0
+        # Build against stable because cargo-audit sometimes depends on things
+        # that require a newer Rust version than our pinned toolchain. This does
+        # not influence the result, so it should be safe.
+        env:
+          RUSTUP_TOOLCHAIN: stable
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}

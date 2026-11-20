@@ -1,0 +1,5 @@
+# Formatting-only commits, skipped by `git blame` (GitHub picks this file up;
+# locally: `git config blame.ignoreRevsFile .git-blame-ignore-revs`).
+
+# Adopt the operators' rustfmt config and reformat
+dbfac6eacec02fe54ffd379b8e91b3827fcf3faf

@@ -279,7 +279,7 @@ fn record_statuses(
 }
 
 /// Whether a customer's `updated_at` is `>= since`. A customer whose
-/// `updated_at` is missing or unparseable counts as modified: syncing it again
+/// `updated_at` is missing or unparsable counts as modified: syncing it again
 /// is harmless, skipping it silently is not.
 fn modified_since(customer: &Customer, since: Option<civil::DateTime>) -> bool {
     let Some(since) = since else {

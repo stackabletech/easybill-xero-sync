@@ -57,7 +57,26 @@ commit if it isn't obvious.
   and hand-made state files, not in a real sync.
 - [ ] **Container build.** The OpenTelemetry dependencies haven't been built
   with the static Dockerfile yet (no C dependencies were added, so no problems
-  are expected).
+  are expected). The `Build/Publish Image` check on the first pull request
+  will show it; remove this item once that is green.
 - [ ] **Dev shell with Nix and direnv.** The credential loading in
   `shell.nix` was only tested as plain bash; `nix-shell` and `direnv allow`
   with the committed `.envrc` haven't been run.
+
+## CI
+
+- [ ] **Make the checks required.** `prek`, `Run cargo-udeps` and
+  `Build/Publish Image` only block merges once they are required in the
+  branch protection (or a ruleset) for `main`. That's a repository setting,
+  not part of the code.
+- [ ] **Dev shell tooling.** `shell.nix` takes Rust from nixpkgs (not the
+  1.99.1 in `rust-toolchain.toml`) and has no rustup, so the
+  `cargo +nightly-…` rustfmt hook fails in the Nix shell. prek, cargo-deny,
+  cargo-udeps and hadolint aren't in it either. Without them, `prek run`
+  doesn't work locally and CI is the first place the lints run.
+- [ ] **Keep the copied configs in sync.** `deny.toml`, `rustfmt.toml`,
+  `.yamllint.yaml`, `.hadolint.yaml`, `.markdownlint.yaml` and the hook
+  versions in `.pre-commit-config.yaml` are copies from
+  stackabletech/operator-templating. Nothing updates them automatically;
+  without that, new advisory ignores or licence decisions there won't reach
+  this repo.

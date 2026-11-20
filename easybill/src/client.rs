@@ -191,7 +191,9 @@ impl EasybillClient {
     ///
     /// # Errors
     ///
-    /// See [`Self::get_json`].
+    /// Returns [`Error::Http`] if the request fails, [`Error::Api`] if
+    /// easybill answers with an error status and [`Error::Parse`] if the
+    /// response can't be deserialised.
     pub async fn customers_page(&self, page: u32, limit: u32) -> Result<Page<Customer>> {
         self.get_json(
             "customers",
@@ -228,7 +230,9 @@ impl EasybillClient {
     ///
     /// # Errors
     ///
-    /// See [`Self::get_json`].
+    /// Returns [`Error::Http`] if the request fails, [`Error::Api`] if
+    /// easybill answers with an error status and [`Error::Parse`] if the
+    /// response can't be deserialised.
     pub async fn customer(&self, id: i64) -> Result<Customer> {
         self.get_json(
             &format!("customers/{id}"),
@@ -243,7 +247,9 @@ impl EasybillClient {
     ///
     /// # Errors
     ///
-    /// See [`Self::get_json`].
+    /// Returns [`Error::Http`] if the request fails, [`Error::Api`] if
+    /// easybill answers with an error status and [`Error::Parse`] if the
+    /// response can't be deserialised.
     pub async fn documents_page(
         &self,
         page: u32,

@@ -1,0 +1,4 @@
+# Keep in sync with the builder image in the Dockerfile.
+[toolchain]
+channel = "1.99.1"
+profile = "default"
