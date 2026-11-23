@@ -6,7 +6,8 @@ become Xero invoices and credit notes (as drafts, with the easybill PDF
 attached). It never writes to easybill.
 
 **Status:** Xero authentication (OAuth for development, custom connection for
-production), config validation (`xero check`), customer→contact sync, and
+production), config validation (`xero check`), customer→contact sync (with
+`xero relink` for contacts the accountants replaced), and
 invoice/credit-note sync with total verification and PDF attachments. Cancelled
 easybill documents are **not** reflected in Xero (out of scope pending an
 accountant decision).
@@ -73,7 +74,7 @@ ssh -L 8080:localhost:8080 user@host
 
 ### Tax / account config
 
-`xero check` and the `sync` commands read a TOML file (`--config`, default
+`xero check`, `xero relink` and the `sync` commands read a TOML file (`--config`, default
 `./config.toml`) mapping easybill tax combinations and booking accounts onto the
 org-specific Xero `TaxType` and `AccountCode` values. See
 [`config.example.toml`](./config.example.toml); `xero check` validates the values
@@ -113,6 +114,9 @@ easybill-xero xero refresh
 # Validate the config against the connected org.
 easybill-xero xero check [--from <YYYY-MM-DD> [--to <YYYY-MM-DD>] [--verbose]]
 
+# Report customers switched to a new Xero contact; --apply moves their link.
+easybill-xero xero relink [--apply]
+
 # Upsert easybill customers as Xero contacts.
 # --since: YYYY-MM-DD or YYYY-MM-DD HH:MM:SS, easybill local time.
 easybill-xero sync customers [--since <DATETIME>] [--dry-run | --preview]
@@ -136,6 +140,32 @@ unusable account on a document fails the check. `--verbose` additionally lists
 every document line (document number, line, VAT, tax key → `TaxType`, booking
 account → `AccountCode`, status).
 
+### `xero relink`
+
+For customers the accountants moved to a new Xero contact. A customer is linked
+to the contact whose `ContactNumber` is its easybill id, and `ContactNumber`
+can't be edited in the Xero UI. So when the accountants move the easybill
+customer number (`AccountNumber`, unique in Xero, archived contacts included) to
+a new contact and archive the old one, the link still points at the old one.
+`sync customers` blocks such a customer.
+
+`xero relink` reports every customer whose linked contact differs from the
+**only** active, unlinked contact carrying its number as `AccountNumber`
+(should several match, for example through stray whitespace, the customer is
+reported as ambiguous and left alone). It changes nothing without `--apply`.
+With `--apply`, for each switch it:
+
+1. clears the old contact's `ContactNumber` (and stops if Xero didn't),
+2. archives the old contact,
+3. sets the easybill id as `ContactNumber` on the new contact.
+
+Xero doesn't let the API edit archived contacts. If any old contact is
+archived, the command lists them by name and waits for Enter: un-archive them in
+Xero first (the command archives them again). It then reads the contacts again and applies
+only the switches it reported. Without a terminal it doesn't wait,
+and those switches fail. The exit code is non-zero with `--apply` if any reported
+customer was not switched.
+
 ### `sync customers`
 
 Fetches all easybill customers (or those modified since `--since`), maps each to
@@ -153,8 +183,15 @@ A customer is **blocked** instead when its `AccountNumber` matches several
 unlinked contacts, or when it would get a new contact whose name matches an
 existing contact that isn't linked to any easybill customer (most likely the
 same company, imported before the first sync — set that contact's
-`AccountNumber` to link it). Blocked and failed customers are logged and the run
-continues; the exit code is non-zero if any customer failed.
+`AccountNumber` to link it).
+
+Xero doesn't let the API edit archived contacts. A customer whose linked contact
+is archived is left unchanged when it is archived in easybill too, and blocked
+otherwise. A customer switched to a new contact (see `xero relink`) is blocked
+until `xero relink --apply` moves the link. Archived contacts don't count as name
+collisions: Xero lets an active contact share a name with an archived one.
+Blocked and failed customers are logged and the run continues; the
+exit code is non-zero if any customer failed.
 
 `--dry-run` prints the payloads without calling Xero, so it cannot show links to
 existing contacts. `--preview` reads the existing Xero contacts and prints one

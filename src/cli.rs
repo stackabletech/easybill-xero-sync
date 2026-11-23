@@ -24,8 +24,8 @@ pub struct Cli {
 
     /// Path to the TOML config file (tax + account tables).
     ///
-    /// Defaults to `./config.toml`. Required by `xero check` and the `sync`
-    /// commands; unused by `xero login` / `xero refresh`.
+    /// Defaults to `./config.toml`. Required by `xero check`, `xero relink`
+    /// and the `sync` commands; unused by `xero login` / `xero refresh`.
     #[arg(long, global = true, env = "EASYBILL_XERO_CONFIG")]
     pub config: Option<PathBuf>,
 
@@ -169,6 +169,19 @@ pub enum XeroCommand {
 
     /// Validate the tax/account config against the connected org.
     Check(CheckArgs),
+
+    /// Find customers the accountants switched to a new Xero contact, and
+    /// move their link to it.
+    Relink(RelinkArgs),
+}
+
+/// Arguments for `xero relink`.
+#[derive(Debug, Args)]
+pub struct RelinkArgs {
+    /// Make the switches instead of only reporting them. Asks for archived
+    /// old contacts to be un-archived in Xero first, and waits for Enter.
+    #[arg(long)]
+    pub apply: bool,
 }
 
 /// Arguments for `xero check`.

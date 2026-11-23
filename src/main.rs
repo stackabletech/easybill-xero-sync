@@ -2,7 +2,8 @@
 //! a Xero organisation.
 //!
 //! Subcommands: `xero login` / `xero refresh` (OAuth2 + token keepalive, dev
-//! only), `xero check` (validate the tax/account config against the org), and
+//! only), `xero check` (validate the tax/account config against the org),
+//! `xero relink` (move a customer's link to the contact it was switched to), and
 //! `sync customers|documents|all` (push easybill data into Xero). State lives in
 //! a single on-disk file. `--xero-auth` selects OAuth (dev) or a custom
 //! connection via client credentials (production).
@@ -52,6 +53,10 @@ enum Error {
     /// The `xero check` command failed.
     #[snafu(display("Config validation against the org failed"))]
     Check { source: xero::check::Error },
+
+    /// The `xero relink` command failed.
+    #[snafu(display("Relinking contacts failed"))]
+    Relink { source: xero::relink::Error },
 
     /// A `sync` command failed.
     #[snafu(display("Sync failed"))]
@@ -149,6 +154,7 @@ fn command_name(command: &Command) -> &'static str {
             XeroCommand::Login(_) => "xero login",
             XeroCommand::Refresh => "xero refresh",
             XeroCommand::Check(_) => "xero check",
+            XeroCommand::Relink(_) => "xero relink",
         },
         Command::Sync { command } => match command {
             SyncCommand::Customers(_) => "sync customers",
@@ -190,6 +196,13 @@ async fn run(cli: Cli) -> Result<(), Error> {
                 xero::check::run(&config, cli.xero_auth, state_override, &options)
                     .await
                     .context(CheckSnafu)
+            }
+            XeroCommand::Relink(args) => {
+                let config = Config::load(&config_path).context(ConfigSnafu)?;
+                let options = xero::relink::Options { apply: args.apply };
+                xero::relink::run(&config, cli.xero_auth, state_override, &options)
+                    .await
+                    .context(RelinkSnafu)
             }
         },
         Command::Sync { command } => match command {

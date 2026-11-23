@@ -52,6 +52,12 @@ commit if it isn't obvious.
 
 ## Testing
 
+- [ ] **`xero relink --apply` with open invoices.** Tested end to end in the
+  dev org on a contact without invoices: clearing `ContactNumber` with an empty
+  value, archiving and linking the new contact all worked. Not tried: archiving
+  an old contact that still has open invoices, which Xero may refuse (the
+  command then stops after clearing `ContactNumber`; see `apply_switch` in
+  `src/xero/relink.rs`).
 - [ ] **End-to-end run with real credentials.** The `document`, `customer` and
   HTTP spans and the recorded statuses have only been checked with a dry run
   and hand-made state files, not in a real sync.

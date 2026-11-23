@@ -9,6 +9,12 @@
 //! Linking happens fresh on every run; nothing about customers is persisted.
 //! The durable link is the contact's `ContactNumber` (the easybill id), which
 //! the upsert sets and which `sync documents` uses to resolve contacts.
+//!
+//! Xero doesn't let the API edit archived contacts. A customer linked to an
+//! archived contact is therefore left alone when it is archived in easybill
+//! too, and blocked otherwise. A customer the accountants switched to a new
+//! contact (see [`relink`]) is blocked until `xero relink --apply` moves the
+//! link, so the sync never updates the retired contact.
 
 use std::{
     collections::{HashMap, HashSet},
@@ -31,6 +37,7 @@ use crate::{
         client::ApiClient,
         contact::{map_customer, name_with_number_suffix},
         models::{Contact, ContactResult, ContactsRequest},
+        relink,
         token::{AuthMode, TokenManager},
     },
 };
@@ -76,16 +83,37 @@ enum Planned<'a> {
         link: Link,
     },
 
+    /// Nothing to do: archived in easybill, and its Xero contact is archived
+    /// too (Xero doesn't let the API edit it).
+    Unchanged {
+        customer: &'a Customer,
+        contact_id: String,
+    },
+
     /// Not safe to upsert (would duplicate or mislink); counted as a failure.
+    /// The reason is logged, so it names contacts by id, never by name.
     Blocked {
         customer: &'a Customer,
         reason: String,
     },
 }
 
+/// The result of linking one customer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Target {
+    /// Upsert, by `ContactID` when one is given (else create).
+    Upsert(Option<String>, Link),
+
+    /// Leave the linked contact alone (see [`Planned::Unchanged`]).
+    Unchanged(String),
+}
+
 /// Existing Xero contacts, indexed for linking and name-collision checks.
 #[derive(Debug, Default)]
 struct ExistingIndex<'a> {
+    /// All contacts, for [`relink::find`].
+    contacts: &'a [ContactResult],
+
     /// Contacts by `ContactNumber` (the easybill id for contacts we created or
     /// linked).
     by_contact_number: HashMap<&'a str, Vec<&'a ContactResult>>,
@@ -99,7 +127,10 @@ struct ExistingIndex<'a> {
 
 impl<'a> ExistingIndex<'a> {
     fn new(contacts: &'a [ContactResult]) -> Self {
-        let mut index = Self::default();
+        let mut index = Self {
+            contacts,
+            ..Self::default()
+        };
         for contact in contacts {
             match trimmed(contact.contact_number.as_deref()) {
                 Some(number) => index
@@ -204,9 +235,7 @@ pub async fn run(
     let mut failed = 0usize;
     let mut statuses = Vec::with_capacity(total);
     for planned in planned {
-        let customer = match &planned {
-            Planned::Upsert { customer, .. } | Planned::Blocked { customer, .. } => customer,
-        };
+        let customer = planned.customer();
         let span = tracing::info_span!(
             "customer",
             customer_id = customer.id,
@@ -217,6 +246,11 @@ pub async fn run(
         let status = async {
             let contact = match planned {
                 Planned::Upsert { contact, .. } => contact,
+                Planned::Unchanged { contact_id, .. } => {
+                    tracing::Span::current().record("contact_id", contact_id.as_str());
+                    tracing::debug!("archived in easybill and Xero; contact left unchanged");
+                    return CustomerStatus::Ok;
+                }
                 Planned::Blocked { reason, .. } => {
                     failed += 1;
                     tracing::Span::current().record("otel.status_code", "error");
@@ -317,16 +351,21 @@ fn parse_easybill_timestamp(ts: &str) -> Option<civil::DateTime> {
 
 /// Resolves the existing Xero contact for a customer: a contact whose
 /// `ContactNumber` == easybill id, else (bootstrap) an unlinked contact whose
-/// `AccountNumber` == easybill number. Returns the `ContactID` to upsert by
-/// (`None` creates a new contact), or a reason when the match is ambiguous.
+/// `AccountNumber` == easybill number. Returns the
+/// `ContactID` to upsert by (`None` creates a new contact), or a reason when
+/// the match is ambiguous, the accountants switched the customer to another
+/// contact (see [`relink`]), or the contact is archived and can't be updated.
 fn resolve_link(
     customer: &Customer,
     existing: &ExistingIndex<'_>,
-) -> std::result::Result<(Option<String>, Link), String> {
+) -> std::result::Result<Target, String> {
+    if let Some(finding) = relink::find(customer, existing.contacts) {
+        return Err(finding.to_string());
+    }
     let id = customer.id.to_string();
     if let Some(matches) = existing.by_contact_number.get(id.as_str()) {
         return match matches.as_slice() {
-            [one] => Ok((Some(one.contact_id.clone()), Link::ContactNumber)),
+            [one] => linked_target(customer, one, Link::ContactNumber),
             many => Err(format!(
                 "{} Xero contacts have ContactNumber {id}",
                 many.len()
@@ -336,7 +375,7 @@ fn resolve_link(
     if let Some(number) = trimmed(customer.number.as_deref()) {
         if let Some(matches) = existing.unlinked_by_account_number.get(number) {
             return match matches.as_slice() {
-                [one] => Ok((Some(one.contact_id.clone()), Link::AccountNumber)),
+                [one] => linked_target(customer, one, Link::AccountNumber),
                 many => Err(format!(
                     "{} unlinked Xero contacts have AccountNumber {number}; \
                      keep it on exactly one",
@@ -345,7 +384,30 @@ fn resolve_link(
             };
         }
     }
-    Ok((None, Link::New))
+    Ok(Target::Upsert(None, Link::New))
+}
+
+/// The target for a customer linked to `contact`: an upsert by its
+/// `ContactID`, unless Xero won't let the API edit it (archived).
+fn linked_target(
+    customer: &Customer,
+    contact: &ContactResult,
+    link: Link,
+) -> std::result::Result<Target, String> {
+    if contact.is_active() {
+        return Ok(Target::Upsert(Some(contact.contact_id.clone()), link));
+    }
+    if customer.archived {
+        return Ok(Target::Unchanged(contact.contact_id.clone()));
+    }
+    Err(format!(
+        "Xero contact {id} is {status} and can't be updated via the API; \
+         un-archive it in Xero, or move AccountNumber {number} from it to a replacement \
+         contact and run `xero relink --apply`",
+        id = contact.contact_id,
+        status = contact.status_label(),
+        number = trimmed(customer.number.as_deref()).unwrap_or("<the easybill customer number>"),
+    ))
 }
 
 /// Builds the planned upsert for each customer: links it to an existing Xero
@@ -371,10 +433,14 @@ fn plan_contacts<'a>(
     let mut planned: Vec<Planned<'a>> = customers
         .iter()
         .map(|customer| match resolve_link(customer, existing) {
-            Ok((contact_id, link)) => Planned::Upsert {
+            Ok(Target::Upsert(contact_id, link)) => Planned::Upsert {
                 customer,
                 contact: Box::new(map_customer(customer, config, contact_id.as_deref())),
                 link,
+            },
+            Ok(Target::Unchanged(contact_id)) => Planned::Unchanged {
+                customer,
+                contact_id,
             },
             Err(reason) => Planned::Blocked { customer, reason },
         })
@@ -429,18 +495,19 @@ fn plan_contacts<'a>(
         });
         if let Some(unlinked) = unlinked {
             let reason = format!(
-                "Xero contact \"{}\" ({}) has the same name but is not linked to any \
-                 easybill customer; set its AccountNumber to {} to link it, or rename \
-                 one side",
-                unlinked.name,
-                unlinked.contact_id,
-                customer
+                "Xero contact {id} has the same name but is not linked to any easybill \
+                 customer; set its AccountNumber to {number} to link it, or rename one side",
+                id = unlinked.contact_id,
+                number = customer
                     .number
                     .as_deref()
                     .unwrap_or("<the easybill customer number>"),
             );
             *entry = Planned::Blocked { customer, reason };
-        } else if batch_collision || !others.is_empty() {
+        } else if batch_collision || others.iter().any(|c| c.is_active()) {
+            // Archived contacts don't count: Xero lets an active contact share
+            // a name with an archived one (such as the one the accountants
+            // replaced); it only refuses to restore the archived one then.
             contact.name = name_with_number_suffix(&contact.name, customer.number.as_deref());
         }
     }
@@ -451,7 +518,9 @@ impl<'a> Planned<'a> {
     /// The easybill customer this plan is for.
     fn customer(&self) -> &'a Customer {
         match self {
-            Self::Upsert { customer, .. } | Self::Blocked { customer, .. } => customer,
+            Self::Upsert { customer, .. }
+            | Self::Unchanged { customer, .. }
+            | Self::Blocked { customer, .. } => customer,
         }
     }
 }
@@ -463,7 +532,7 @@ fn normalize_name(name: &str) -> String {
 }
 
 /// Trims an optional string, treating empty/whitespace as absent.
-fn trimmed(value: Option<&str>) -> Option<&str> {
+pub(crate) fn trimmed(value: Option<&str>) -> Option<&str> {
     value.map(str::trim).filter(|v| !v.is_empty())
 }
 
@@ -495,6 +564,9 @@ fn print_dry_run(planned: &Planned<'_>) {
             Ok(json) => println!("--- customer {} ->\n{json}", customer.id),
             Err(e) => println!("--- customer {} -> <unserialisable: {e}>", customer.id),
         },
+        Planned::Unchanged { customer, .. } => {
+            println!("--- customer {} -> unchanged (archived)", customer.id);
+        }
         Planned::Blocked { customer, reason } => {
             println!("--- customer {} -> BLOCKED: {reason}", customer.id);
         }
@@ -503,7 +575,7 @@ fn print_dry_run(planned: &Planned<'_>) {
 
 /// Prints one line per customer with the planned link, plus a summary.
 fn print_preview(planned: &[Planned<'_>]) {
-    let (mut updates, mut creates, mut blocked) = (0usize, 0usize, 0usize);
+    let (mut updates, mut creates, mut unchanged, mut blocked) = (0usize, 0usize, 0usize, 0usize);
     for entry in planned {
         match entry {
             Planned::Upsert {
@@ -526,6 +598,16 @@ fn print_preview(planned: &[Planned<'_>]) {
                     }
                 }
             }
+            Planned::Unchanged {
+                customer,
+                contact_id,
+            } => {
+                unchanged += 1;
+                println!(
+                    "{} -> unchanged: archived in easybill and Xero ({contact_id})",
+                    customer_label(customer)
+                );
+            }
             Planned::Blocked { customer, reason } => {
                 blocked += 1;
                 println!("{} -> BLOCKED: {reason}", customer_label(customer));
@@ -533,9 +615,9 @@ fn print_preview(planned: &[Planned<'_>]) {
         }
     }
     println!(
-        "preview: {updates} update(s), {creates} create(s), {blocked} blocked, of {} selected. \
-         No Xero writes made.",
-        planned.len()
+        "preview: {updates} update(s), {creates} create(s), {unchanged} unchanged, \
+         {blocked} blocked, of {selected} selected. No Xero writes made.",
+        selected = planned.len()
     );
 }
 
@@ -619,6 +701,20 @@ mod tests {
             contact_number: number.map(ToOwned::to_owned),
             name: name.to_owned(),
             account_number: account.map(ToOwned::to_owned),
+            contact_status: None,
+        }
+    }
+
+    /// Like [`xero`], archived.
+    fn archived(
+        contact_id: &str,
+        name: &str,
+        number: Option<&str>,
+        account: Option<&str>,
+    ) -> ContactResult {
+        ContactResult {
+            contact_status: Some("ARCHIVED".to_owned()),
+            ..xero(contact_id, name, number, account)
         }
     }
 
@@ -626,6 +722,7 @@ mod tests {
     fn upsert<'p>(planned: &'p Planned<'_>) -> (&'p Contact, Link) {
         match planned {
             Planned::Upsert { contact, link, .. } => (contact, *link),
+            Planned::Unchanged { .. } => panic!("unexpectedly unchanged"),
             Planned::Blocked { reason, .. } => panic!("unexpectedly blocked: {reason}"),
         }
     }
@@ -783,5 +880,88 @@ mod tests {
         assert_eq!(second_link, Link::New);
         assert_eq!(first.name, "Acme (1001)");
         assert_eq!(second.name, "Acme (1002)");
+    }
+
+    /// Like [`customer`], archived in easybill.
+    fn archived_customer(id: i64, number: &str, company: &str) -> Customer {
+        serde_json::from_value(serde_json::json!({
+            "id": id, "number": number, "personal": false,
+            "company_name": company, "emails": [], "archived": true,
+        }))
+        .expect("customer fixture")
+    }
+
+    /// The reason of a blocked entry; panics if not blocked.
+    fn blocked<'p>(planned: &'p Planned<'_>) -> &'p str {
+        match planned {
+            Planned::Blocked { reason, .. } => reason,
+            other => panic!("unexpectedly not blocked: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn customer_switched_to_a_new_contact_is_blocked_with_relink_hint() {
+        // The accountants archived the linked contact and created a new one
+        // carrying the customer number; the sync must not update the old one.
+        let existing = vec![
+            archived("guid-old", "Acme", Some("1"), Some("1001-old")),
+            xero("guid-new", "Acme", None, Some("1001")),
+        ];
+        let customers = vec![customer(1, "1001", "Acme", None)];
+        let planned = plan_contacts(&customers, &config(), &ExistingIndex::new(&existing));
+        let reason = blocked(&planned[0]);
+        assert!(reason.contains("xero relink --apply"), "{reason}");
+        assert!(reason.contains("guid-new"), "{reason}");
+    }
+
+    #[test]
+    fn archived_contact_of_archived_customer_is_left_unchanged() {
+        let existing = vec![archived("guid-own", "Acme", Some("1"), Some("1001"))];
+        let customers = vec![archived_customer(1, "1001", "Acme")];
+        let planned = plan_contacts(&customers, &config(), &ExistingIndex::new(&existing));
+        assert!(matches!(
+            &planned[0],
+            Planned::Unchanged { contact_id, .. } if contact_id == "guid-own"
+        ));
+    }
+
+    #[test]
+    fn archived_contact_of_active_customer_is_blocked() {
+        let existing = vec![archived("guid-own", "Acme", Some("1"), Some("1001"))];
+        let customers = vec![customer(1, "1001", "Acme", None)];
+        let planned = plan_contacts(&customers, &config(), &ExistingIndex::new(&existing));
+        let reason = blocked(&planned[0]);
+        assert!(reason.contains("un-archive it in Xero"), "{reason}");
+    }
+
+    #[test]
+    fn account_number_link_after_interrupted_relink() {
+        // State after a relink whose last step failed: the old contact is
+        // archived without ContactNumber, the new one is not linked yet.
+        let existing = vec![
+            archived("guid-old", "Acme", None, Some("1001-old")),
+            xero("guid-new", "Acme", None, Some("1001")),
+        ];
+        let customers = vec![customer(1, "1001", "Acme", None)];
+        let planned = plan_contacts(&customers, &config(), &ExistingIndex::new(&existing));
+        let (contact, link) = upsert(&planned[0]);
+        assert_eq!(link, Link::AccountNumber);
+        assert_eq!(contact.contact_id.as_deref(), Some("guid-new"));
+    }
+
+    #[test]
+    fn archived_contact_with_the_same_name_is_no_collision() {
+        // After `xero relink --apply`: both contacts are named "Acme" in Xero,
+        // the old one archived. The new one must not be renamed "Acme (1001)".
+        let existing = vec![
+            archived("guid-old", "Acme", None, Some("1001-old")),
+            xero("guid-new", "Acme", Some("1"), Some("1001")),
+        ];
+        let customers = vec![customer(1, "1001", "Acme", None)];
+        let planned = plan_contacts(&customers, &config(), &ExistingIndex::new(&existing));
+        let (contact, link) = upsert(&planned[0]);
+        assert_eq!(link, Link::ContactNumber);
+        assert_eq!(contact.contact_id.as_deref(), Some("guid-new"));
+        assert_eq!(contact.name, "Acme");
     }
 }
