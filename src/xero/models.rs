@@ -295,9 +295,55 @@ pub struct ContactResult {
     pub name: String,
 
     /// The human-visible customer number; used once to link contacts that
-    /// already existed in Xero before the first sync.
+    /// already existed in Xero before the first sync, and by `xero relink` to
+    /// find the contact the accountants switched a customer to.
     #[serde(rename = "AccountNumber", default)]
     pub account_number: Option<String>,
+
+    /// `ACTIVE`, `ARCHIVED` or `GDPRREQUEST`; absent is treated as `ACTIVE`.
+    #[serde(rename = "ContactStatus", default)]
+    pub contact_status: Option<String>,
+}
+
+impl ContactResult {
+    /// Whether Xero lets the API change this contact: archived (and
+    /// GDPR-requested) contacts can't be edited.
+    pub fn is_active(&self) -> bool {
+        self.contact_status
+            .as_deref()
+            .is_none_or(|status| status.eq_ignore_ascii_case("ACTIVE"))
+    }
+
+    /// The status for humans, `ACTIVE` when Xero sent none.
+    pub fn status_label(&self) -> &str {
+        self.contact_status.as_deref().unwrap_or("ACTIVE")
+    }
+}
+
+/// A partial update of one existing contact, used by `xero relink`.
+///
+/// Only the fields set are sent, so Xero keeps everything else.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct ContactPatch {
+    /// The contact to change.
+    #[serde(rename = "ContactID")]
+    pub contact_id: String,
+
+    /// The new `ContactNumber`; an empty string clears it.
+    #[serde(rename = "ContactNumber", skip_serializing_if = "Option::is_none")]
+    pub contact_number: Option<String>,
+
+    /// The new status (`ARCHIVED`).
+    #[serde(rename = "ContactStatus", skip_serializing_if = "Option::is_none")]
+    pub contact_status: Option<String>,
+}
+
+/// The `POST /Contacts` envelope for [`ContactPatch`]es.
+#[derive(Debug, Clone, Serialize)]
+pub struct ContactPatchesRequest {
+    /// The contacts being changed.
+    #[serde(rename = "Contacts")]
+    pub contacts: Vec<ContactPatch>,
 }
 
 // ---------------------------------------------------------------------------

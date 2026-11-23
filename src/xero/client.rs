@@ -25,8 +25,9 @@ use snafu::{ResultExt, Snafu};
 
 use crate::xero::{
     models::{
-        AccountsResponse, ContactResult, ContactsRequest, ContactsResponse, CreditNotesRequest,
-        CreditNotesResponse, InvoicesRequest, InvoicesResponse, TaxRatesResponse,
+        AccountsResponse, ContactPatch, ContactPatchesRequest, ContactResult, ContactsRequest,
+        ContactsResponse, CreditNotesRequest, CreditNotesResponse, InvoicesRequest,
+        InvoicesResponse, TaxRatesResponse,
     },
     token::{self, AccessContext, TokenManager},
 };
@@ -363,6 +364,20 @@ impl ApiClient {
     /// See [`Self::request_json`].
     pub async fn upsert_contacts(&self, request: &ContactsRequest) -> Result<ContactsResponse> {
         self.request_json(Method::POST, "Contacts", "POST /Contacts", Some(request))
+            .await
+    }
+
+    /// Changes single fields of one existing contact via `POST /Contacts`
+    /// (matched by `ContactID`).
+    ///
+    /// # Errors
+    ///
+    /// See [`Self::request_json`].
+    pub async fn patch_contact(&self, patch: ContactPatch) -> Result<ContactsResponse> {
+        let request = ContactPatchesRequest {
+            contacts: vec![patch],
+        };
+        self.request_json(Method::POST, "Contacts", "POST /Contacts", Some(&request))
             .await
     }
 
